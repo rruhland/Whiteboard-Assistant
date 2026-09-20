@@ -1,0 +1,120 @@
+import type { Stroke, Viewport } from './board';
+import { previewViewport, type Gesture } from './gesture';
+
+export type RenderState = {
+  strokes: Stroke[];
+  viewport: Viewport;
+  selectedId: string | null;
+  gesture: Gesture | null;
+  inkColor: string;
+  inkWidth: number;
+};
+
+function drawStroke(
+  context: CanvasRenderingContext2D,
+  stroke: Pick<Stroke, 'points' | 'color' | 'width'>,
+  dx = 0,
+  dy = 0,
+  color = stroke.color,
+  width = stroke.width,
+): void {
+  const [first, ...rest] = stroke.points;
+  if (!first) return;
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = width;
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  if (rest.length === 0) {
+    context.beginPath();
+    context.arc(first.x + dx, first.y + dy, width / 2, 0, Math.PI * 2);
+    context.fill();
+    return;
+  }
+  context.beginPath();
+  context.moveTo(first.x + dx, first.y + dy);
+  for (const point of rest) context.lineTo(point.x + dx, point.y + dy);
+  context.stroke();
+}
+
+export class CanvasRenderer {
+  private readonly context: CanvasRenderingContext2D;
+
+  constructor(private readonly canvas: HTMLCanvasElement) {
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas 2D rendering is unavailable');
+    this.context = context;
+  }
+
+  resize(): boolean {
+    const bounds = this.canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(bounds.width * ratio));
+    const height = Math.max(1, Math.round(bounds.height * ratio));
+    if (this.canvas.width === width && this.canvas.height === height) return false;
+    this.canvas.width = width;
+    this.canvas.height = height;
+    return true;
+  }
+
+  render(state: RenderState): void {
+    this.resize();
+    const ratio = window.devicePixelRatio || 1;
+    const bounds = this.canvas.getBoundingClientRect();
+    const viewport = state.gesture?.type === 'pan' ? previewViewport(state.gesture) : state.viewport;
+    const context = this.context;
+
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, bounds.width, bounds.height);
+    this.drawGrid(bounds.width, bounds.height, viewport, ratio);
+
+    context.setTransform(
+      ratio * viewport.zoom,
+      0,
+      0,
+      ratio * viewport.zoom,
+      ratio * viewport.x,
+      ratio * viewport.y,
+    );
+
+    const erased = new Set(state.gesture?.type === 'erase' ? state.gesture.strokeIds : []);
+    const movingId = state.gesture?.type === 'move' ? state.gesture.strokeId : null;
+    const moveX = state.gesture?.type === 'move' ? state.gesture.current.x - state.gesture.origin.x : 0;
+    const moveY = state.gesture?.type === 'move' ? state.gesture.current.y - state.gesture.origin.y : 0;
+
+    for (const stroke of state.strokes) {
+      if (erased.has(stroke.id) || stroke.id === movingId) continue;
+      if (stroke.id === state.selectedId) drawStroke(context, stroke, 0, 0, '#2f7d8c', stroke.width + 5 / viewport.zoom);
+      drawStroke(context, stroke);
+    }
+
+    if (movingId) {
+      const moving = state.strokes.find((stroke) => stroke.id === movingId);
+      if (moving) {
+        drawStroke(context, moving, moveX, moveY, '#2f7d8c', moving.width + 5 / viewport.zoom);
+        drawStroke(context, moving, moveX, moveY);
+      }
+    }
+
+    if (state.gesture?.type === 'ink') {
+      drawStroke(context, { points: state.gesture.points, color: state.inkColor, width: state.inkWidth });
+    }
+  }
+
+  private drawGrid(width: number, height: number, viewport: Viewport, ratio: number): void {
+    let spacing = 24 * viewport.zoom;
+    while (spacing < 14) spacing *= 2;
+    const offsetX = ((viewport.x % spacing) + spacing) % spacing;
+    const offsetY = ((viewport.y % spacing) + spacing) % spacing;
+    const context = this.context;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.fillStyle = '#c9cec9';
+    for (let x = offsetX; x < width; x += spacing) {
+      for (let y = offsetY; y < height; y += spacing) {
+        context.beginPath();
+        context.arc(x, y, 1, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+  }
+}
