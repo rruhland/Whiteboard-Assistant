@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardDocument } from '../src/board';
+import type { BoardDocumentV2, ParsedBoard } from '../src/document';
 import {
   AUTOSAVE_KEY,
   loadAutosave,
@@ -9,7 +9,8 @@ import {
   type StorageLike,
 } from '../src/storage';
 
-const empty: BoardDocument = { version: 1, events: [], viewport: { x: 4, y: 8, zoom: 1.25 } };
+const empty: BoardDocumentV2 = { version: 2, events: [], associationEvents: [], viewport: { x: 4, y: 8, zoom: 1.25 } };
+const parsedEmpty: ParsedBoard = { sourceVersion: 2, document: empty };
 
 function memoryStorage(initial?: string): StorageLike {
   let value = initial ?? null;
@@ -26,7 +27,7 @@ describe('board persistence', () => {
     const storage = memoryStorage();
 
     expect(saveAutosave(storage, empty)).toEqual({ ok: true });
-    expect(loadAutosave(storage)).toEqual({ document: empty });
+    expect(loadAutosave(storage)).toEqual({ document: parsedEmpty });
   });
 
   it('reports unavailable storage instead of claiming a save succeeded', () => {
@@ -48,7 +49,7 @@ describe('board persistence', () => {
   });
 
   it('retains the current document when portable JSON is malformed', () => {
-    const current = empty;
+    const current = parsedEmpty;
     const result = readPortableBoard('{broken', current);
 
     expect(result.document).toBe(current);
@@ -57,10 +58,10 @@ describe('board persistence', () => {
   });
 
   it('accepts a valid portable document and reports replacement', () => {
-    const current: BoardDocument = { ...empty, viewport: { x: 0, y: 0, zoom: 1 } };
+    const current: ParsedBoard = { sourceVersion: 2, document: { ...empty, viewport: { x: 0, y: 0, zoom: 1 } } };
     const result = readPortableBoard(JSON.stringify(empty), current);
 
-    expect(result).toEqual({ document: empty, replaced: true });
+    expect(result).toEqual({ document: parsedEmpty, replaced: true });
     expect(AUTOSAVE_KEY).toContain('whiteboard');
   });
 
@@ -72,9 +73,9 @@ describe('board persistence', () => {
       },
     };
 
-    const result = openPortableBoard(JSON.stringify(empty), empty, unavailable);
+    const result = openPortableBoard(JSON.stringify(empty), parsedEmpty, unavailable);
 
-    expect(result.document).toEqual(empty);
+    expect(result.document).toEqual(parsedEmpty);
     expect(result.replaced).toBe(true);
     expect(result.error).toBe('Not saved: quota exceeded');
   });

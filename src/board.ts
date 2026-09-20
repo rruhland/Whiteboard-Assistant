@@ -291,8 +291,8 @@ export class BoardModel {
   private undoStack: BoardEvent[];
   private redoStack: BoardEvent[];
 
-  constructor(document: BoardDocument = emptyDocument()) {
-    const validated = validateDocument(document);
+  constructor(document: { events: BoardEvent[] } = emptyDocument()) {
+    const validated = validateDocument({ version: 1, events: document.events, viewport: { x: 0, y: 0, zoom: 1 } });
     const state = replay(validated);
     this.eventLog = state.events;
     this.strokeMap = state.strokes;
@@ -386,21 +386,6 @@ export class BoardModel {
       this.undoStack.push(target);
     }
   }
-}
-
-export function serializeBoard(document: BoardDocument): string {
-  return JSON.stringify(validateDocument(document));
-}
-
-export function parseBoard(json: string): BoardDocument {
-  if (typeof json !== 'string') throw new Error('Board JSON must be a string');
-  let value: unknown;
-  try {
-    value = JSON.parse(json);
-  } catch (error) {
-    throw new Error(`Invalid board JSON: ${error instanceof Error ? error.message : 'parse error'}`);
-  }
-  return validateDocument(value);
 }
 
 export const BOARD_ZOOM_LIMITS = { min: MIN_ZOOM, max: MAX_ZOOM } as const;
