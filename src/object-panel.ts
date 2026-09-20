@@ -4,6 +4,7 @@ export type ObjectPanelState = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   selectedStrokeId: string | null;
+  selectedObjectId: string | null;
   checkedObjectIds: ReadonlySet<string>;
   overlayEnabled: boolean;
   unassignedStrokeIds: string[];
@@ -63,7 +64,6 @@ function timeLabel(value: number): string {
 }
 
 export class ObjectPanel {
-  private selectedObjectId: string | null = null;
   private status = '';
 
   constructor(private readonly root: HTMLElement, private readonly actions: ObjectPanelActions) {}
@@ -73,9 +73,7 @@ export class ObjectPanel {
   }
 
   render(state: ObjectPanelState): void {
-    if (this.selectedObjectId && !state.nodes.some(({ id }) => id === this.selectedObjectId)) this.selectedObjectId = null;
-    const selectedObject = state.nodes.find(({ id }) => id === this.selectedObjectId) ?? state.nodes.find(({ status }) => status === 'active') ?? state.nodes[0];
-    if (selectedObject) this.selectedObjectId = selectedObject.id;
+    const selectedObject = state.nodes.find(({ id }) => id === state.selectedObjectId) ?? state.nodes.find(({ status }) => status === 'active') ?? state.nodes[0];
     const controls = derivePanelControls(state);
     const activeCount = state.nodes.filter(({ status }) => status === 'active').length;
     const layout = layoutGraph(state.nodes, 280, 150);
@@ -119,18 +117,26 @@ export class ObjectPanel {
     this.root.querySelectorAll<HTMLInputElement>('[data-check-object]').forEach((input) => input.addEventListener('change', () => {
       const checked = new Set(Array.from(this.root.querySelectorAll<HTMLInputElement>('[data-check-object]:checked')).map(({ dataset }) => dataset.checkObject as string));
       this.actions.onCheckedObjectsChange(checked);
+      const merge = this.root.querySelector<HTMLButtonElement>('[data-merge]');
+      const assign = this.root.querySelector<HTMLButtonElement>('[data-assign]');
+      if (merge) merge.disabled = checked.size < 2;
+      if (assign) assign.disabled = !state.selectedStrokeId || !state.unassignedStrokeIds.includes(state.selectedStrokeId) || checked.size !== 1;
     }));
     this.root.querySelectorAll<HTMLElement>('[data-select-object]').forEach((element) => element.addEventListener('click', () => {
-      this.selectedObjectId = element.dataset.selectObject as string;
-      this.actions.onSelectObject(this.selectedObjectId);
+      this.actions.onSelectObject(element.dataset.selectObject as string);
     }));
     this.root.querySelectorAll<SVGGElement>('[data-object-id]').forEach((element) => element.addEventListener('click', () => {
-      this.selectedObjectId = element.dataset.objectId as string;
-      this.actions.onSelectObject(this.selectedObjectId);
+      this.actions.onSelectObject(element.dataset.objectId as string);
     }));
-    this.root.querySelector<HTMLButtonElement>('[data-merge]')?.addEventListener('click', () => this.actions.onMerge([...state.checkedObjectIds]));
+    this.root.querySelector<HTMLButtonElement>('[data-merge]')?.addEventListener('click', () => {
+      const checked = Array.from(this.root.querySelectorAll<HTMLInputElement>('[data-check-object]:checked')).map(({ dataset }) => dataset.checkObject as string);
+      this.actions.onMerge(checked);
+    });
     this.root.querySelector<HTMLButtonElement>('[data-split]')?.addEventListener('click', this.actions.onSplitSelectedStroke);
-    this.root.querySelector<HTMLButtonElement>('[data-assign]')?.addEventListener('click', () => this.actions.onAssignSelectedStroke([...state.checkedObjectIds][0]));
+    this.root.querySelector<HTMLButtonElement>('[data-assign]')?.addEventListener('click', () => {
+      const checked = this.root.querySelector<HTMLInputElement>('[data-check-object]:checked')?.dataset.checkObject;
+      this.actions.onAssignSelectedStroke(checked);
+    });
     this.root.querySelector<HTMLButtonElement>('[data-assign-new]')?.addEventListener('click', () => this.actions.onAssignSelectedStroke());
   }
 }

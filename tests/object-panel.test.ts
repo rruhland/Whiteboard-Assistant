@@ -8,7 +8,7 @@ const nodes: GraphNode[] = [
 ];
 
 function state(overrides: Partial<ObjectPanelState> = {}): ObjectPanelState {
-  return { nodes, edges: [], selectedStrokeId: 'one', checkedObjectIds: new Set(['a', 'b']), overlayEnabled: true, unassignedStrokeIds: [], ...overrides };
+  return { nodes, edges: [], selectedStrokeId: 'one', selectedObjectId: 'a', checkedObjectIds: new Set(['a', 'b']), overlayEnabled: true, unassignedStrokeIds: [], ...overrides };
 }
 
 describe('object panel view model', () => {

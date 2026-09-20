@@ -86,6 +86,7 @@ function panelState(): ObjectPanelState {
   return {
     ...graph,
     selectedStrokeId: selectedId,
+    selectedObjectId,
     checkedObjectIds,
     overlayEnabled,
     unassignedStrokeIds: getUnassignedVisibleStrokes(workspace.associations, workspace.board.strokes).map(({ id }) => id),
@@ -127,7 +128,7 @@ function correction(action: () => string | readonly [string, string], success: s
 const objectPanel = new ObjectPanel(objectPanelRoot, {
   onClose: closeObjectPanel,
   onToggleOverlay(enabled) { overlayEnabled = enabled; refreshPanel(); scheduleRender(); },
-  onCheckedObjectsChange(ids) { checkedObjectIds = new Set(ids); refreshPanel(); },
+  onCheckedObjectsChange(ids) { checkedObjectIds = new Set(ids); },
   onMerge(ids) {
     correction(() => {
       const childId = workspace.associations.mergeObjects(ids);
