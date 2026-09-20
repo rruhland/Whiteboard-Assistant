@@ -25,11 +25,11 @@
 - Browser resizing and display pixel ratio cannot move world coordinates.
 
 ## Task 1 — Document and geometry core
-- [ ] Read the spec, configure TypeScript/Vite/Vitest and write failing behavior tests.
-- [ ] Implement src/board.ts with Point, Stroke, Viewport, BoardDocument, BoardModel, serializeBoard and parseBoard.
-- [ ] Implement src/geometry.ts with screenToWorld, worldToScreen, zoomAt and hitTestStroke.
-- [ ] Verify core tests, typecheck, and commit; write implementation report.
-- [ ] Independent task review and any fixes.
+- [x] Read the spec, configure TypeScript/Vite/Vitest and write failing behavior tests.
+- [x] Implement src/board.ts with Point, Stroke, Viewport, BoardDocument, BoardModel, serializeBoard and parseBoard.
+- [x] Implement src/geometry.ts with screenToWorld, worldToScreen, zoomAt and hitTestStroke.
+- [x] Verify core tests, typecheck, and commit; write implementation report.
+- [x] Independent task review and any fixes. Review found erased strokes returned at the wrong draw order; stable internal ranks fixed it with a live/reload regression test. 11 tests pass.
 
 ### Core interface
 ```ts
