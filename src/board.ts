@@ -319,10 +319,11 @@ export class BoardModel {
     return this.redoStack.length > 0;
   }
 
-  addStroke(points: Point[], color: string, width: number): void {
+  addStroke(points: Point[], color: string, width: number): string {
     const stroke: Stroke = { id: idFor('stroke'), createdAt: Date.now(), author: 'user', color, width, points: points.map(clonePoint) };
     assertStroke(stroke, 'stroke');
     this.commit({ id: idFor('event'), time: Date.now(), actor: 'user', kind: 'add', changes: [{ before: null, after: stroke }] });
+    return stroke.id;
   }
 
   moveStroke(id: string, dx: number, dy: number): void {

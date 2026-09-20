@@ -1,6 +1,7 @@
 import './style.css';
-import { BoardModel, serializeBoard, type BoardDocument, type Point, type Viewport } from './board';
+import { type Point } from './board';
 import { CanvasRenderer } from './canvas';
+import { serializeBoard } from './document';
 import { screenToWorld, hitTestStroke, hitTestStrokesAlongSegment, zoomAt } from './geometry';
 import {
   beginGesture,
@@ -11,6 +12,7 @@ import {
 } from './gesture';
 import { isSpacePanTarget } from './input';
 import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
+import { commitStroke, loadWorkspace, workspaceDocument, type WorkspaceState } from './workspace';
 
 type Tool = 'pen' | 'select' | 'eraser' | 'hand';
 
@@ -36,8 +38,10 @@ const zoomLevel = element<HTMLElement>('#zoom-level');
 const saveStatus = element<HTMLElement>('#save-status');
 const onboarding = element<HTMLElement>('#onboarding');
 
-let model = new BoardModel();
-let viewport: Viewport = { x: 0, y: 0, zoom: 1 };
+let workspace: WorkspaceState = loadWorkspace({
+  sourceVersion: 2,
+  document: { version: 2, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } },
+});
 let selectedId: string | null = null;
 let activeTool: Tool = 'pen';
 let activeGesture: Gesture | null = null;
@@ -52,9 +56,8 @@ try {
   storage = window.localStorage;
   const restored = loadAutosave(storage);
   if (restored.document) {
-    model = new BoardModel(restored.document);
-    viewport = restored.document.viewport;
-    saveStatus.textContent = 'Restored autosave';
+    workspace = loadWorkspace(restored.document);
+    saveStatus.textContent = workspace.migratedFromVersion1 ? 'Restored and upgraded autosave' : 'Restored autosave';
   } else if (restored.error) {
     saveStatus.textContent = restored.error;
     saveStatus.dataset.state = 'error';
@@ -64,13 +67,13 @@ try {
   saveStatus.dataset.state = 'error';
 }
 
-function currentDocument(): BoardDocument {
-  return model.toDocument(viewport);
+function currentDocument() {
+  return workspaceDocument(workspace);
 }
 
 function refreshCachedMetadata(): void {
-  cachedEventCount = model.events.length;
-  hasDrawn = model.events.some((event) => event.kind === 'add');
+  cachedEventCount = workspace.board.events.length;
+  hasDrawn = workspace.board.events.some((event) => event.kind === 'add');
 }
 
 refreshCachedMetadata();
@@ -80,8 +83,8 @@ function scheduleRender(): void {
   renderFrame = window.requestAnimationFrame(() => {
     renderFrame = 0;
     renderer.render({
-      strokes: model.strokes,
-      viewport,
+      strokes: workspace.board.strokes,
+      viewport: workspace.viewport,
       selectedId,
       gesture: activeGesture,
       inkColor: colorInput.value,
@@ -91,12 +94,12 @@ function scheduleRender(): void {
 }
 
 function updateControls(): void {
-  const strokes = model.strokes;
+  const strokes = workspace.board.strokes;
   strokeCount.textContent = String(strokes.length);
   editCount.textContent = String(cachedEventCount);
-  zoomLevel.textContent = `${Math.round(viewport.zoom * 100)}%`;
-  undoButton.disabled = !model.canUndo;
-  redoButton.disabled = !model.canRedo;
+  zoomLevel.textContent = `${Math.round(workspace.viewport.zoom * 100)}%`;
+  undoButton.disabled = !workspace.board.canUndo;
+  redoButton.disabled = !workspace.board.canRedo;
   onboarding.hidden = hasDrawn;
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => {
     button.setAttribute('aria-pressed', String(button.dataset.tool === activeTool));
@@ -130,7 +133,7 @@ function persistNavigationSoon(): void {
 
 function afterEdit(): void {
   refreshCachedMetadata();
-  if (selectedId && !model.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
+  if (selectedId && !workspace.board.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
   updateControls();
   scheduleRender();
   persist();
@@ -158,12 +161,12 @@ function screenPoint(event: PointerEvent | WheelEvent): { x: number; y: number }
 }
 
 function worldPoint(event: PointerEvent): Point {
-  const world = screenToWorld(screenPoint(event), viewport);
+  const world = screenToWorld(screenPoint(event), workspace.viewport);
   return { ...world, pressure: event.pressure, time: Date.now() };
 }
 
 function hitAt(world: Point): string | undefined {
-  return hitTestStroke(model.strokes, world, 7 / viewport.zoom)?.id;
+  return hitTestStroke(workspace.board.strokes, world, 7 / workspace.viewport.zoom)?.id;
 }
 
 function startPointer(event: PointerEvent): void {
@@ -176,7 +179,7 @@ function startPointer(event: PointerEvent): void {
   if (effectiveTool === 'pen' && event.button === 0) {
     next = { type: 'ink', pointerId: event.pointerId, points: [world] };
   } else if (effectiveTool === 'hand') {
-    next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...viewport } };
+    next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...workspace.viewport } };
   } else if (effectiveTool === 'select' && event.button === 0) {
     const strokeId = hitAt(world);
     selectedId = strokeId ?? null;
@@ -203,10 +206,10 @@ function movePointer(event: PointerEvent): void {
   } else if (activeGesture.type === 'erase') {
     const world = worldPoint(event);
     const strokeIds = hitTestStrokesAlongSegment(
-      model.strokes,
+      workspace.board.strokes,
       activeGesture.current,
       world,
-      7 / viewport.zoom,
+      7 / workspace.viewport.zoom,
       new Set(activeGesture.strokeIds),
     ).map(({ id }) => id);
     activeGesture = updateGesture(activeGesture, event.pointerId, { world, erasedStrokeIds: strokeIds });
@@ -226,21 +229,22 @@ function endPointer(event: PointerEvent): void {
   if (!commit) return;
 
   if (commit.type === 'ink') {
-    model.addStroke(commit.points, colorInput.value, Number(widthInput.value));
+    const result = commitStroke(workspace, commit.points, colorInput.value, Number(widthInput.value));
+    if (result.associationError) setStatus(`Stroke saved; grouping failed: ${result.associationError}`, 'error');
     afterEdit();
   } else if (commit.type === 'move') {
     if (commit.dx !== 0 || commit.dy !== 0) {
-      model.moveStroke(commit.strokeId, commit.dx, commit.dy);
+      workspace.board.moveStroke(commit.strokeId, commit.dx, commit.dy);
       afterEdit();
     } else {
       scheduleRender();
     }
   } else if (commit.type === 'erase') {
-    for (const id of commit.strokeIds) model.eraseStroke(id);
+    for (const id of commit.strokeIds) workspace.board.eraseStroke(id);
     if (commit.strokeIds.length) afterEdit();
     else scheduleRender();
   } else {
-    viewport = commit.viewport;
+    workspace.viewport = commit.viewport;
     updateControls();
     scheduleRender();
     persistNavigationSoon();
@@ -250,7 +254,7 @@ function endPointer(event: PointerEvent): void {
 function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
   cancelActiveGesture();
   const bounds = canvas.getBoundingClientRect();
-  viewport = zoomAt(viewport, anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
+  workspace.viewport = zoomAt(workspace.viewport, anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
   updateControls();
   scheduleRender();
   persistNavigationSoon();
@@ -258,13 +262,13 @@ function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
 
 function undo(): void {
   cancelActiveGesture();
-  model.undo();
+  workspace.board.undo();
   afterEdit();
 }
 
 function redo(): void {
   cancelActiveGesture();
-  model.redo();
+  workspace.board.redo();
   afterEdit();
 }
 
@@ -301,7 +305,7 @@ element<HTMLButtonElement>('#zoom-out').addEventListener('click', () => changeZo
 element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => changeZoom(1.2));
 element<HTMLButtonElement>('#reset-view').addEventListener('click', () => {
   cancelActiveGesture();
-  viewport = { x: 0, y: 0, zoom: 1 };
+  workspace.viewport = { x: 0, y: 0, zoom: 1 };
   updateControls();
   scheduleRender();
   persistNavigationSoon();
@@ -328,13 +332,12 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
   if (!file) return;
   try {
-    const result = openPortableBoard(await file.text(), currentDocument(), storage);
+    const result = openPortableBoard(await file.text(), { sourceVersion: 2, document: currentDocument() }, storage);
     if (!result.replaced) {
       setStatus(result.error ?? 'Open failed', 'error');
       return;
     }
-    model = new BoardModel(result.document);
-    viewport = result.document.viewport;
+    workspace = loadWorkspace(result.document);
     selectedId = null;
     refreshCachedMetadata();
     updateControls();
@@ -375,7 +378,7 @@ window.addEventListener('keydown', (event) => {
   } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId) {
     event.preventDefault();
     cancelActiveGesture();
-    model.eraseStroke(selectedId);
+    workspace.board.eraseStroke(selectedId);
     selectedId = null;
     afterEdit();
   }

@@ -178,7 +178,7 @@ export class AssociationModel {
   private eventLog: AssociationEvent[];
   private objectMap: Map<string, WorkObject>;
   private creationCount: number;
-  private readonly knownStrokeIds: ReadonlySet<string>;
+  private readonly knownStrokeIds: Set<string>;
 
   constructor(events: AssociationEvent[], knownStrokeIds: ReadonlySet<string>) {
     this.knownStrokeIds = new Set(knownStrokeIds);
@@ -192,7 +192,7 @@ export class AssociationModel {
   get objects(): WorkObject[] { return [...this.objectMap.values()].map(clone); }
 
   associateStroke(stroke: Stroke, visibleStrokes: readonly Stroke[]): string {
-    if (!this.knownStrokeIds.has(stroke.id)) throw new Error(`Cannot associate unknown stroke ${stroke.id}`);
+    this.knownStrokeIds.add(stroke.id);
     if (this.activeOwner(stroke.id)) throw new Error(`Stroke ${stroke.id} already has an active membership`);
     const target = proposedObject(stroke, this.objects, visibleStrokes);
     const time = stroke.createdAt;
