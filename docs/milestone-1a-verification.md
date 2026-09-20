@@ -41,6 +41,8 @@ Browser checks found a false success message after importing with unavailable st
 
 Whole-branch review reproduced four further input issues: sparse eraser samples missing crossed ink, pending erasures shielding overlapping ink, cancellation from an unrelated pointer, and Space overriding native button activation. A single correction batch addressed all four, with unit regressions and a successful rerun of the exact browser reproductions on the production build.
 
+The scoped follow-up review approved all four corrections and found no new regression in the fix. GitHub CI also passed for the implementation branch. Delivery is tracked in [pull request #1](https://github.com/rruhland/Whiteboard-Assistant/pull/1).
+
 ## Scope limits
 
 Whole-stroke erasing and single-stroke selection are intentional. Local autosave belongs to this browser/origin and is subject to browser storage limits; use portable JSON for backups. Partial erasing, touch pinch/palm rejection, graph grouping, timeline UI and models remain future work.

@@ -69,12 +69,12 @@ Test examples: add then move preserves ID; erase then undo restores original geo
 - [x] Implement one active pointer with capture, cancellation, space/middle-button pan, wheel zoom, click/drag selection, and keyboard undo/redo/delete.
 - [x] Use validated local autosave and file import/export. Ignore shortcuts while editing native input controls. Show errors; never erase current work after a failed import.
 - [x] Write README, add GitHub Actions npm ci/test/build, verify full test suite and build, commit and report.
-- [ ] Independent task review and browser smoke verification, then fixes if required.
+- [x] Independent task review and browser smoke verification, then fixes if required. The final correction batch addressed swept/overlapping erasing, pointer-specific cancellation, and native Space-button activation; scoped re-review approved all four fixes.
 
 Browser verification: draw a line and dot, pan, zoom, draw under new transform, move/erase, undo/redo, export and inspect JSON, reopen/reload, import malformed data, exercise pointer cancellation and a resized viewport. Save screenshots under ignored output/playwright.
 
 ## Delivery
-- [ ] Whole-branch review for correctness and milestone scope.
-- [ ] Final npm test and npm run build on final code, with browser checks covering any changed paths.
-- [ ] Push feature branch, open and attach PR, confirm git status and remote refs.
-- [ ] Show the app locally and report delivered behavior, verification and limitations.
+- [x] Whole-branch review for correctness and milestone scope.
+- [x] Final npm test and npm run build on final code, with browser checks covering any changed paths. 27 tests pass; production build and exact browser regression scenarios pass.
+- [x] Push feature branch, open and attach PR, confirm git status and remote refs. Pull request: https://github.com/rruhland/Whiteboard-Assistant/pull/1.
+- [x] Show the app locally and report delivered behavior, verification and limitations. Local preview: http://127.0.0.1:5173/. See docs/milestone-1a-verification.md for evidence and limits.
