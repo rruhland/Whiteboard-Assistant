@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-milestone-1b-design.md`
 
+**Execution status:** Implemented through Task 5 on `feat/milestone-1b`. Automated and production-browser evidence is recorded in `docs/milestone-1b-verification.md`.
+
 ## Global Constraints
 
 - Preserve every 1A ink event, stroke ID, world coordinate, undo/redo behavior, viewport, autosave, and portable-file behavior.
