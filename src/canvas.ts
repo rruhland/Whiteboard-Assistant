@@ -1,5 +1,6 @@
 import type { Stroke, Viewport } from './board';
 import { previewViewport, type Gesture } from './gesture';
+import type { ObjectOverlay } from './object-panel';
 
 export type RenderState = {
   strokes: Stroke[];
@@ -8,6 +9,8 @@ export type RenderState = {
   gesture: Gesture | null;
   inkColor: string;
   inkWidth: number;
+  objectOverlays: ObjectOverlay[];
+  selectedObjectStrokeIds: ReadonlySet<string>;
 };
 
 function drawStroke(
@@ -84,6 +87,7 @@ export class CanvasRenderer {
 
     for (const stroke of state.strokes) {
       if (erased.has(stroke.id) || stroke.id === movingId) continue;
+      if (state.selectedObjectStrokeIds.has(stroke.id)) drawStroke(context, stroke, 0, 0, '#d98945', stroke.width + 3 / viewport.zoom);
       if (stroke.id === state.selectedId) drawStroke(context, stroke, 0, 0, '#2f7d8c', stroke.width + 5 / viewport.zoom);
       drawStroke(context, stroke);
     }
@@ -91,6 +95,7 @@ export class CanvasRenderer {
     if (movingId) {
       const moving = state.strokes.find((stroke) => stroke.id === movingId);
       if (moving) {
+        if (state.selectedObjectStrokeIds.has(moving.id)) drawStroke(context, moving, moveX, moveY, '#d98945', moving.width + 3 / viewport.zoom);
         drawStroke(context, moving, moveX, moveY, '#2f7d8c', moving.width + 5 / viewport.zoom);
         drawStroke(context, moving, moveX, moveY);
       }
@@ -99,6 +104,29 @@ export class CanvasRenderer {
     if (state.gesture?.type === 'ink') {
       drawStroke(context, { points: state.gesture.points, color: state.inkColor, width: state.inkWidth });
     }
+
+    for (const overlay of state.objectOverlays) this.drawObjectOverlay(overlay, viewport.zoom);
+  }
+
+  private drawObjectOverlay(overlay: ObjectOverlay, zoom: number): void {
+    const context = this.context;
+    const padding = 7 / zoom;
+    const lineWidth = (overlay.selected ? 2 : 1.25) / zoom;
+    context.save();
+    context.strokeStyle = overlay.color;
+    context.fillStyle = overlay.color;
+    context.lineWidth = lineWidth;
+    context.setLineDash([7 / zoom, 5 / zoom]);
+    context.strokeRect(
+      overlay.bounds.minX - padding,
+      overlay.bounds.minY - padding,
+      overlay.bounds.maxX - overlay.bounds.minX + padding * 2,
+      overlay.bounds.maxY - overlay.bounds.minY + padding * 2,
+    );
+    context.setLineDash([]);
+    context.font = `${12 / zoom}px system-ui, sans-serif`;
+    context.fillText(overlay.label, overlay.bounds.minX - padding, overlay.bounds.minY - 11 / zoom);
+    context.restore();
   }
 
   private drawGrid(width: number, height: number, viewport: Viewport, ratio: number): void {

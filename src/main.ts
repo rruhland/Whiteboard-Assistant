@@ -1,6 +1,8 @@
 import './style.css';
-import { BoardModel, serializeBoard, type BoardDocument, type Point, type Viewport } from './board';
+import { getUnassignedVisibleStrokes, projectGraph } from './association';
+import { type Point } from './board';
 import { CanvasRenderer } from './canvas';
+import { serializeBoard } from './document';
 import { screenToWorld, hitTestStroke, hitTestStrokesAlongSegment, zoomAt } from './geometry';
 import {
   beginGesture,
@@ -10,7 +12,9 @@ import {
   type Gesture,
 } from './gesture';
 import { isSpacePanTarget } from './input';
+import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
 import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
+import { commitStroke, loadWorkspace, workspaceDocument, type WorkspaceState } from './workspace';
 
 type Tool = 'pen' | 'select' | 'eraser' | 'hand';
 
@@ -35,9 +39,14 @@ const editCount = element<HTMLElement>('#edit-count');
 const zoomLevel = element<HTMLElement>('#zoom-level');
 const saveStatus = element<HTMLElement>('#save-status');
 const onboarding = element<HTMLElement>('#onboarding');
+const objectsToggle = element<HTMLButtonElement>('#objects-toggle');
+const objectPanelRoot = element<HTMLElement>('#object-panel');
+const objectPanelBackdrop = element<HTMLButtonElement>('#object-panel-backdrop');
 
-let model = new BoardModel();
-let viewport: Viewport = { x: 0, y: 0, zoom: 1 };
+let workspace: WorkspaceState = loadWorkspace({
+  sourceVersion: 2,
+  document: { version: 2, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } },
+});
 let selectedId: string | null = null;
 let activeTool: Tool = 'pen';
 let activeGesture: Gesture | null = null;
@@ -47,14 +56,18 @@ let navigationSaveTimer = 0;
 let cachedEventCount = 0;
 let hasDrawn = false;
 let storage: StorageLike | null = null;
+let objectPanelOpen = false;
+let overlayEnabled = true;
+let checkedObjectIds = new Set<string>();
+let selectedObjectId: string | null = null;
 
 try {
   storage = window.localStorage;
   const restored = loadAutosave(storage);
   if (restored.document) {
-    model = new BoardModel(restored.document);
-    viewport = restored.document.viewport;
-    saveStatus.textContent = 'Restored autosave';
+    workspace = loadWorkspace(restored.document);
+    if (workspace.migratedFromVersion1) saveAutosave(storage, workspaceDocument(workspace));
+    saveStatus.textContent = workspace.migratedFromVersion1 ? 'Restored and upgraded autosave' : 'Restored autosave';
   } else if (restored.error) {
     saveStatus.textContent = restored.error;
     saveStatus.dataset.state = 'error';
@@ -64,13 +77,93 @@ try {
   saveStatus.dataset.state = 'error';
 }
 
-function currentDocument(): BoardDocument {
-  return model.toDocument(viewport);
+function currentDocument() {
+  return workspaceDocument(workspace);
 }
 
+function panelState(): ObjectPanelState {
+  const graph = projectGraph(workspace.associations, workspace.board.strokes);
+  return {
+    ...graph,
+    selectedStrokeId: selectedId,
+    selectedObjectId,
+    checkedObjectIds,
+    overlayEnabled,
+    unassignedStrokeIds: getUnassignedVisibleStrokes(workspace.associations, workspace.board.strokes).map(({ id }) => id),
+  };
+}
+
+function refreshPanel(): void {
+  objectsToggle.setAttribute('aria-expanded', String(objectPanelOpen));
+  objectPanelRoot.hidden = !objectPanelOpen;
+  objectPanelBackdrop.hidden = !objectPanelOpen;
+  if (objectPanelOpen) objectPanel.render(panelState());
+}
+
+function closeObjectPanel(): void {
+  objectPanelOpen = false;
+  refreshPanel();
+  objectsToggle.focus();
+}
+
+function finishAssociationCorrection(message: string): void {
+  const activeIds = new Set(workspace.associations.objects.filter(({ status }) => status === 'active').map(({ id }) => id));
+  checkedObjectIds = new Set([...checkedObjectIds].filter((id) => activeIds.has(id)));
+  objectPanel.setStatus(message);
+  updateControls();
+  scheduleRender();
+  persist();
+}
+
+function correction(action: () => string | readonly [string, string], success: string): void {
+  try {
+    action();
+    finishAssociationCorrection(success);
+  } catch (error) {
+    objectPanel.setStatus(error instanceof Error ? error.message : String(error));
+    refreshPanel();
+  }
+}
+
+const objectPanel = new ObjectPanel(objectPanelRoot, {
+  onClose: closeObjectPanel,
+  onToggleOverlay(enabled) { overlayEnabled = enabled; refreshPanel(); scheduleRender(); },
+  onCheckedObjectsChange(ids) { checkedObjectIds = new Set(ids); },
+  onMerge(ids) {
+    correction(() => {
+      const childId = workspace.associations.mergeObjects(ids);
+      selectedObjectId = childId;
+      checkedObjectIds = new Set([childId]);
+      return childId;
+    }, 'Objects merged');
+  },
+  onSplitSelectedStroke() {
+    correction(() => {
+      if (!selectedId) throw new Error('Select a stroke to split');
+      const strokeId = selectedId;
+      const owner = workspace.associations.objects.find(({ status, strokeIds }) => status === 'active' && strokeIds.includes(strokeId));
+      if (!owner) throw new Error('The selected stroke has no active object');
+      const children = workspace.associations.splitObject(owner.id, strokeId);
+      selectedObjectId = children[0];
+      checkedObjectIds = new Set(children);
+      return children;
+    }, 'Object split');
+  },
+  onAssignSelectedStroke(objectId) {
+    correction(() => {
+      if (!selectedId) throw new Error('Select an unassigned stroke');
+      const assignedId = workspace.associations.assignStroke(selectedId, objectId);
+      selectedObjectId = assignedId;
+      checkedObjectIds = new Set([assignedId]);
+      return assignedId;
+    }, objectId ? 'Stroke assigned' : 'Object created');
+  },
+  onSelectObject(id) { selectedObjectId = id; refreshPanel(); scheduleRender(); },
+});
+
 function refreshCachedMetadata(): void {
-  cachedEventCount = model.events.length;
-  hasDrawn = model.events.some((event) => event.kind === 'add');
+  cachedEventCount = workspace.board.events.length;
+  hasDrawn = workspace.board.events.some((event) => event.kind === 'add');
 }
 
 refreshCachedMetadata();
@@ -79,28 +172,36 @@ function scheduleRender(): void {
   if (renderFrame) return;
   renderFrame = window.requestAnimationFrame(() => {
     renderFrame = 0;
+    const graph = projectGraph(workspace.associations, workspace.board.strokes);
+    const selectedObject = graph.nodes.find(({ id }) => id === selectedObjectId);
+    const objectOverlays: ObjectOverlay[] = overlayEnabled ? graph.nodes
+      .filter((node) => node.status === 'active' && node.bounds)
+      .map((node) => ({ id: node.id, label: node.label, bounds: node.bounds!, selected: node.id === selectedObjectId, color: node.id === selectedObjectId ? '#c66c28' : '#4d8790' })) : [];
     renderer.render({
-      strokes: model.strokes,
-      viewport,
+      strokes: workspace.board.strokes,
+      viewport: workspace.viewport,
       selectedId,
       gesture: activeGesture,
       inkColor: colorInput.value,
       inkWidth: Number(widthInput.value),
+      objectOverlays,
+      selectedObjectStrokeIds: new Set(selectedObject?.strokeIds ?? []),
     });
   });
 }
 
 function updateControls(): void {
-  const strokes = model.strokes;
+  const strokes = workspace.board.strokes;
   strokeCount.textContent = String(strokes.length);
   editCount.textContent = String(cachedEventCount);
-  zoomLevel.textContent = `${Math.round(viewport.zoom * 100)}%`;
-  undoButton.disabled = !model.canUndo;
-  redoButton.disabled = !model.canRedo;
+  zoomLevel.textContent = `${Math.round(workspace.viewport.zoom * 100)}%`;
+  undoButton.disabled = !workspace.board.canUndo;
+  redoButton.disabled = !workspace.board.canRedo;
   onboarding.hidden = hasDrawn;
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => {
     button.setAttribute('aria-pressed', String(button.dataset.tool === activeTool));
   });
+  refreshPanel();
 }
 
 function setStatus(message: string, state: 'normal' | 'error' = 'normal'): void {
@@ -130,7 +231,7 @@ function persistNavigationSoon(): void {
 
 function afterEdit(): void {
   refreshCachedMetadata();
-  if (selectedId && !model.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
+  if (selectedId && !workspace.board.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
   updateControls();
   scheduleRender();
   persist();
@@ -158,12 +259,12 @@ function screenPoint(event: PointerEvent | WheelEvent): { x: number; y: number }
 }
 
 function worldPoint(event: PointerEvent): Point {
-  const world = screenToWorld(screenPoint(event), viewport);
+  const world = screenToWorld(screenPoint(event), workspace.viewport);
   return { ...world, pressure: event.pressure, time: Date.now() };
 }
 
 function hitAt(world: Point): string | undefined {
-  return hitTestStroke(model.strokes, world, 7 / viewport.zoom)?.id;
+  return hitTestStroke(workspace.board.strokes, world, 7 / workspace.viewport.zoom)?.id;
 }
 
 function startPointer(event: PointerEvent): void {
@@ -176,7 +277,7 @@ function startPointer(event: PointerEvent): void {
   if (effectiveTool === 'pen' && event.button === 0) {
     next = { type: 'ink', pointerId: event.pointerId, points: [world] };
   } else if (effectiveTool === 'hand') {
-    next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...viewport } };
+    next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...workspace.viewport } };
   } else if (effectiveTool === 'select' && event.button === 0) {
     const strokeId = hitAt(world);
     selectedId = strokeId ?? null;
@@ -203,10 +304,10 @@ function movePointer(event: PointerEvent): void {
   } else if (activeGesture.type === 'erase') {
     const world = worldPoint(event);
     const strokeIds = hitTestStrokesAlongSegment(
-      model.strokes,
+      workspace.board.strokes,
       activeGesture.current,
       world,
-      7 / viewport.zoom,
+      7 / workspace.viewport.zoom,
       new Set(activeGesture.strokeIds),
     ).map(({ id }) => id);
     activeGesture = updateGesture(activeGesture, event.pointerId, { world, erasedStrokeIds: strokeIds });
@@ -226,21 +327,22 @@ function endPointer(event: PointerEvent): void {
   if (!commit) return;
 
   if (commit.type === 'ink') {
-    model.addStroke(commit.points, colorInput.value, Number(widthInput.value));
+    const result = commitStroke(workspace, commit.points, colorInput.value, Number(widthInput.value));
     afterEdit();
+    if (result.associationError) setStatus(`Stroke saved; grouping failed: ${result.associationError}`, 'error');
   } else if (commit.type === 'move') {
     if (commit.dx !== 0 || commit.dy !== 0) {
-      model.moveStroke(commit.strokeId, commit.dx, commit.dy);
+      workspace.board.moveStroke(commit.strokeId, commit.dx, commit.dy);
       afterEdit();
     } else {
       scheduleRender();
     }
   } else if (commit.type === 'erase') {
-    for (const id of commit.strokeIds) model.eraseStroke(id);
+    for (const id of commit.strokeIds) workspace.board.eraseStroke(id);
     if (commit.strokeIds.length) afterEdit();
     else scheduleRender();
   } else {
-    viewport = commit.viewport;
+    workspace.viewport = commit.viewport;
     updateControls();
     scheduleRender();
     persistNavigationSoon();
@@ -250,7 +352,7 @@ function endPointer(event: PointerEvent): void {
 function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
   cancelActiveGesture();
   const bounds = canvas.getBoundingClientRect();
-  viewport = zoomAt(viewport, anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
+  workspace.viewport = zoomAt(workspace.viewport, anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
   updateControls();
   scheduleRender();
   persistNavigationSoon();
@@ -258,13 +360,13 @@ function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
 
 function undo(): void {
   cancelActiveGesture();
-  model.undo();
+  workspace.board.undo();
   afterEdit();
 }
 
 function redo(): void {
   cancelActiveGesture();
-  model.redo();
+  workspace.board.redo();
   afterEdit();
 }
 
@@ -301,7 +403,7 @@ element<HTMLButtonElement>('#zoom-out').addEventListener('click', () => changeZo
 element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => changeZoom(1.2));
 element<HTMLButtonElement>('#reset-view').addEventListener('click', () => {
   cancelActiveGesture();
-  viewport = { x: 0, y: 0, zoom: 1 };
+  workspace.viewport = { x: 0, y: 0, zoom: 1 };
   updateControls();
   scheduleRender();
   persistNavigationSoon();
@@ -328,19 +430,20 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
   if (!file) return;
   try {
-    const result = openPortableBoard(await file.text(), currentDocument(), storage);
+    const result = openPortableBoard(await file.text(), { sourceVersion: 2, document: currentDocument() }, storage);
     if (!result.replaced) {
       setStatus(result.error ?? 'Open failed', 'error');
       return;
     }
-    model = new BoardModel(result.document);
-    viewport = result.document.viewport;
+    workspace = loadWorkspace(result.document);
     selectedId = null;
+    selectedObjectId = null;
+    checkedObjectIds.clear();
     refreshCachedMetadata();
     updateControls();
     scheduleRender();
     if (result.error) setStatus(result.error, 'error');
-    else setStatus('Board opened and saved locally');
+    else if (persist()) setStatus(workspace.migratedFromVersion1 ? 'Board opened, upgraded, and saved locally' : 'Board opened and saved locally');
   } catch (error) {
     setStatus(`Open failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
   }
@@ -348,6 +451,11 @@ fileInput.addEventListener('change', async () => {
 
 window.addEventListener('keydown', (event) => {
   if (isEditable(event.target)) return;
+  if (event.key === 'Escape' && objectPanelOpen) {
+    event.preventDefault();
+    closeObjectPanel();
+    return;
+  }
   const command = event.ctrlKey || event.metaKey;
   if (command && event.key.toLowerCase() === 'z') {
     event.preventDefault();
@@ -375,7 +483,7 @@ window.addEventListener('keydown', (event) => {
   } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId) {
     event.preventDefault();
     cancelActiveGesture();
-    model.eraseStroke(selectedId);
+    workspace.board.eraseStroke(selectedId);
     selectedId = null;
     afterEdit();
   }
@@ -389,6 +497,12 @@ window.addEventListener('blur', () => {
 });
 
 new ResizeObserver(scheduleRender).observe(canvas);
+objectsToggle.addEventListener('click', () => {
+  objectPanelOpen = !objectPanelOpen;
+  refreshPanel();
+  if (objectPanelOpen) objectPanelRoot.querySelector<HTMLElement>('button, input')?.focus();
+});
+objectPanelBackdrop.addEventListener('click', closeObjectPanel);
 canvas.dataset.tool = activeTool;
 updateControls();
 scheduleRender();

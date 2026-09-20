@@ -1,4 +1,4 @@
-import { parseBoard, serializeBoard, type BoardDocument } from './board';
+import { parseBoard, serializeBoard, type BoardDocumentV2, type ParsedBoard } from './document';
 
 export const AUTOSAVE_KEY = 'whiteboard-assistant.board.v1';
 
@@ -8,7 +8,7 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function saveAutosave(storage: StorageLike, document: BoardDocument): { ok: true } | { ok: false; error: string } {
+export function saveAutosave(storage: StorageLike, document: BoardDocumentV2): { ok: true } | { ok: false; error: string } {
   try {
     storage.setItem(AUTOSAVE_KEY, serializeBoard(document));
     return { ok: true };
@@ -17,7 +17,7 @@ export function saveAutosave(storage: StorageLike, document: BoardDocument): { o
   }
 }
 
-export function loadAutosave(storage: StorageLike): { document?: BoardDocument; error?: string } {
+export function loadAutosave(storage: StorageLike): { document?: ParsedBoard; error?: string } {
   try {
     const saved = storage.getItem(AUTOSAVE_KEY);
     return saved === null ? {} : { document: parseBoard(saved) };
@@ -28,8 +28,8 @@ export function loadAutosave(storage: StorageLike): { document?: BoardDocument; 
 
 export function readPortableBoard(
   json: string,
-  current: BoardDocument,
-): { document: BoardDocument; replaced: boolean; error?: string } {
+  current: ParsedBoard,
+): { document: ParsedBoard; replaced: boolean; error?: string } {
   try {
     return { document: parseBoard(json), replaced: true };
   } catch (error) {
@@ -39,12 +39,13 @@ export function readPortableBoard(
 
 export function openPortableBoard(
   json: string,
-  current: BoardDocument,
+  current: ParsedBoard,
   storage: StorageLike | null,
-): { document: BoardDocument; replaced: boolean; error?: string } {
+): { document: ParsedBoard; replaced: boolean; error?: string } {
   const opened = readPortableBoard(json, current);
   if (!opened.replaced) return opened;
   if (!storage) return { ...opened, error: 'Not saved: local storage is unavailable' };
-  const saved = saveAutosave(storage, opened.document);
+  if (opened.document.sourceVersion !== 2) return opened;
+  const saved = saveAutosave(storage, opened.document.document);
   return saved.ok ? opened : { ...opened, error: saved.error };
 }

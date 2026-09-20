@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import {
   BoardModel,
-  parseBoard,
-  serializeBoard,
   type BoardDocument,
   type Point,
   type Stroke,
 } from '../src/board';
+import { parseBoard, serializeBoard, type BoardDocumentV2 } from '../src/document';
 import {
   hitTestStroke,
   hitTestStrokesAlongSegment,
@@ -90,11 +89,11 @@ describe('BoardModel', () => {
   test('round trips document data while preserving events, IDs, geometry, and viewport', () => {
     const model = new BoardModel();
     model.addStroke([point(-8, -2)], '#abc', 6);
-    const document = model.toDocument(viewport);
+    const document: BoardDocumentV2 = { version: 2, events: model.events, associationEvents: [], viewport };
     const restored = parseBoard(serializeBoard(document));
 
-    expect(restored).toEqual(document);
-    expect(new BoardModel(restored).strokes).toEqual(model.strokes);
+    expect(restored).toEqual({ sourceVersion: 2, document });
+    expect(new BoardModel(restored.document).strokes).toEqual(model.strokes);
   });
 
   test('rebuilds undo and redo availability after loading an event log', () => {
@@ -113,7 +112,7 @@ describe('BoardModel', () => {
 
   test('rejects unsupported versions, nonfinite geometry, duplicate IDs, and invalid references', () => {
     const base: BoardDocument = { version: 1, events: [], viewport };
-    expect(() => parseBoard(JSON.stringify({ ...base, version: 2 }))).toThrow(/version/i);
+    expect(() => parseBoard(JSON.stringify({ ...base, version: 3 }))).toThrow(/version/i);
     expect(() => parseBoard(JSON.stringify({ ...base, viewport: { ...viewport, zoom: NaN } }))).toThrow(/finite|zoom/i);
 
     const duplicate: Stroke = {
@@ -140,7 +139,7 @@ describe('BoardModel', () => {
     const model = new BoardModel();
     model.addStroke([point(2, 2)], '#000', 1);
     const before = model.strokes;
-    expect(() => new BoardModel({ version: 1, events: [{ id: 'bad', time: 1, actor: 'user', kind: 'erase', changes: [] }], viewport })).toThrow();
+    expect(() => new BoardModel({ events: [{ id: 'bad', time: 1, actor: 'user', kind: 'erase', changes: [] }] })).toThrow();
     expect(model.strokes).toEqual(before);
   });
 });

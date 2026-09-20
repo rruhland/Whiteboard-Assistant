@@ -28,7 +28,8 @@ button {
 
 button:focus-visible,
 input:focus-visible,
-canvas:focus-visible {
+canvas:focus-visible,
+.graph-node:focus-visible {
   outline: 3px solid rgba(36, 124, 144, 0.38);
   outline-offset: 2px;
 }
@@ -91,6 +92,250 @@ canvas:focus-visible {
   border-radius: 6px;
   background: transparent;
   cursor: pointer;
+}
+
+.object-panel {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100% - 24px));
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid #d6d8d3;
+  border-radius: 14px;
+  background: rgba(252, 251, 247, 0.98);
+  box-shadow: 0 14px 42px rgba(31, 44, 47, 0.2);
+}
+
+.object-panel[hidden],
+.panel-backdrop[hidden] {
+  display: none;
+}
+
+.object-panel-header,
+.object-overview,
+.section-heading,
+.object-row label {
+  display: flex;
+  align-items: center;
+}
+
+.object-panel-header {
+  justify-content: space-between;
+}
+
+.object-panel-header h2,
+.object-panel h3 {
+  margin: 0;
+}
+
+.object-panel-header h2 {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.object-panel-header > button {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: #eef0ec;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.eyebrow {
+  color: #52747a;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.object-panel section {
+  margin-top: 18px;
+}
+
+.object-panel h3 {
+  margin-bottom: 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.object-overview {
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px;
+  border-radius: 9px;
+  color: #536164;
+  background: #eef1ed;
+  font-size: 12px;
+}
+
+.object-overview label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.section-heading {
+  justify-content: space-between;
+  color: #6f797a;
+  font-size: 10px;
+}
+
+.near-key,
+.lineage-key {
+  display: inline-block;
+  width: 14px;
+  margin: 0 3px 2px 6px;
+  border-top: 1px dashed #6e8f95;
+}
+
+.lineage-key {
+  border-top-style: solid;
+  border-color: #9b6f4f;
+}
+
+.object-graph {
+  display: block;
+  width: 100%;
+  height: 150px;
+  border: 1px solid #e1e2dc;
+  border-radius: 10px;
+  background: #f7f6f1;
+}
+
+.graph-edge {
+  stroke: #8a7770;
+  stroke-width: 1.3;
+}
+
+.graph-edge.near {
+  stroke: #71969c;
+  stroke-dasharray: 4 4;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node circle {
+  fill: #367b87;
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.graph-node.superseded circle {
+  fill: #a6adaa;
+}
+
+.graph-node text {
+  fill: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.object-list {
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.object-row {
+  margin-bottom: 4px;
+  border: 1px solid #e0e1dc;
+  border-radius: 8px;
+}
+
+.object-row.selected {
+  border-color: #719ba3;
+  background: #eef6f6;
+}
+
+.object-row label {
+  gap: 7px;
+  padding: 5px 7px;
+}
+
+.object-row button {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.object-row button span {
+  color: #707a7b;
+  font-size: 10px;
+}
+
+.correction-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.correction-actions button {
+  min-height: 32px;
+  border: 1px solid #d2d6d1;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.correction-actions button:disabled {
+  color: #a0a7a4;
+  cursor: default;
+}
+
+.panel-status,
+.empty-objects {
+  min-height: 16px;
+  margin: 7px 0 0;
+  color: #637173;
+  font-size: 11px;
+}
+
+.object-details {
+  margin: 0;
+  font-size: 11px;
+}
+
+.object-details div {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 7px;
+  padding: 4px 0;
+  border-bottom: 1px solid #ecece7;
+}
+
+.object-details dt {
+  color: #6c7778;
+}
+
+.object-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.panel-backdrop {
+  display: none;
 }
 
 .tool-button {
@@ -340,5 +585,23 @@ canvas:focus-visible {
   .onboarding {
     white-space: normal;
     text-align: center;
+  }
+}
+
+@media (max-width: 760px) {
+  .object-panel {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: min(360px, calc(100% - 16px));
+  }
+
+  .panel-backdrop {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: rgba(29, 39, 41, 0.28);
   }
 }
