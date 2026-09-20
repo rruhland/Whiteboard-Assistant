@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f2ec" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23276e7c'/%3E%3Cpath d='M8 22 20 10l3 3-12 12-4 1z' fill='white'/%3E%3C/svg%3E" />
+    <title>Whiteboard Assistant</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="toolbar" aria-label="Whiteboard controls">
+        <div class="brand" aria-label="Whiteboard Assistant">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Whiteboard</span>
+        </div>
+
+        <div class="tool-group" role="group" aria-label="Drawing tools">
+          <button class="tool-button" data-tool="pen" aria-pressed="true" title="Pen (P)">
+            <span aria-hidden="true">✎</span><span>Pen</span>
+          </button>
+          <button class="tool-button" data-tool="select" aria-pressed="false" title="Select (V)">
+            <span aria-hidden="true">↖</span><span>Select</span>
+          </button>
+          <button class="tool-button" data-tool="eraser" aria-pressed="false" title="Eraser (E)">
+            <span aria-hidden="true">◇</span><span>Eraser</span>
+          </button>
+          <button class="tool-button" data-tool="hand" aria-pressed="false" title="Hand (H or Space+drag)">
+            <span aria-hidden="true">✋</span><span>Hand</span>
+          </button>
+        </div>
+
+        <div class="ink-controls" role="group" aria-label="Ink settings">
+          <label class="color-control" title="Ink color">
+            <span>Color</span>
+            <input id="ink-color" type="color" value="#263238" aria-label="Ink color" />
+          </label>
+          <label class="width-control" title="Pen width">
+            <span>Width</span>
+            <input id="ink-width" type="range" min="1" max="18" step="1" value="4" aria-label="Pen width" />
+            <output id="width-value" for="ink-width">4</output>
+          </label>
+        </div>
+
+        <div class="toolbar-spacer"></div>
+
+        <div class="tool-group" role="group" aria-label="History">
+          <button id="undo" class="icon-button" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled>↶</button>
+          <button id="redo" class="icon-button" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled>↷</button>
+        </div>
+
+        <div class="tool-group file-actions" role="group" aria-label="Board file">
+          <button id="open-board" class="text-button" title="Open a board JSON file">Open</button>
+          <button id="save-board" class="text-button primary" title="Download a portable board JSON file">Save file</button>
+          <input id="file-input" type="file" accept="application/json,.json" hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <canvas id="board" aria-label="Whiteboard drawing surface" tabindex="0">
+          Your browser does not support the canvas element.
+        </canvas>
+        <div id="onboarding" class="onboarding" aria-hidden="true">
+          Draw with the pen · drag with Space to pan · scroll to zoom
+        </div>
+        <div class="zoom-controls" role="group" aria-label="Zoom controls">
+          <button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+          <button id="reset-view" title="Reset view">Reset</button>
+          <button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        </div>
+      </main>
+
+      <footer class="status-bar">
+        <div class="board-stats" aria-label="Board statistics">
+          <span><strong id="stroke-count">0</strong> strokes</span>
+          <span><strong id="edit-count">0</strong> edits</span>
+          <span><strong id="zoom-level">100%</strong> zoom</span>
+        </div>
+        <span id="save-status" class="save-status" role="status" aria-live="polite">Ready</span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
