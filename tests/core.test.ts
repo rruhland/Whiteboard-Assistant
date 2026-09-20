@@ -9,6 +9,7 @@ import {
 } from '../src/board';
 import {
   hitTestStroke,
+  hitTestStrokesAlongSegment,
   screenToWorld,
   worldToScreen,
   zoomAt,
@@ -165,5 +166,28 @@ describe('geometry', () => {
     expect(hitTestStroke([bottom, top], { x: 5, y: 0.5 }, 1)?.id).toBe('top');
     expect(hitTestStroke([bottom], { x: 5, y: 1.9 }, 0.1)?.id).toBeUndefined();
     expect(hitTestStroke([top], { x: 5.5, y: 0 }, 0)?.id).toBe('top');
+  });
+
+  test('swept hit testing catches a stroke crossed between pointer samples', () => {
+    const stroke: Stroke = {
+      id: 'vertical', createdAt: 1, author: 'user', color: '#000', width: 2,
+      points: [point(10, 0), point(10, 20)],
+    };
+
+    expect(hitTestStrokesAlongSegment([stroke], { x: 0, y: 10 }, { x: 20, y: 10 }, 0).map(({ id }) => id)).toEqual(['vertical']);
+  });
+
+  test('swept hit testing skips preview-erased strokes to reveal overlaps', () => {
+    const bottom: Stroke = { id: 'bottom', createdAt: 1, author: 'user', color: '#000', width: 2, points: [point(0, 0), point(20, 0)] };
+    const top: Stroke = { id: 'top', createdAt: 2, author: 'user', color: '#fff', width: 2, points: [point(0, 0), point(20, 0)] };
+
+    expect(hitTestStrokesAlongSegment([bottom, top], { x: 2, y: 0 }, { x: 8, y: 0 }, 0, new Set(['top'])).map(({ id }) => id)).toEqual(['bottom']);
+  });
+
+  test('one sparse eraser segment collects every crossed visible stroke', () => {
+    const left: Stroke = { id: 'left', createdAt: 1, author: 'user', color: '#000', width: 2, points: [point(5, 0), point(5, 20)] };
+    const right: Stroke = { id: 'right', createdAt: 2, author: 'user', color: '#000', width: 2, points: [point(15, 0), point(15, 20)] };
+
+    expect(hitTestStrokesAlongSegment([left, right], { x: 0, y: 10 }, { x: 20, y: 10 }, 0).map(({ id }) => id)).toEqual(['right', 'left']);
   });
 });

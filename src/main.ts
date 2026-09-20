@@ -1,13 +1,15 @@
 import './style.css';
 import { BoardModel, serializeBoard, type BoardDocument, type Point, type Viewport } from './board';
 import { CanvasRenderer } from './canvas';
-import { screenToWorld, hitTestStroke, zoomAt } from './geometry';
+import { screenToWorld, hitTestStroke, hitTestStrokesAlongSegment, zoomAt } from './geometry';
 import {
   beginGesture,
   finishGesture,
+  ownsGesturePointer,
   updateGesture,
   type Gesture,
 } from './gesture';
+import { isSpacePanTarget } from './input';
 import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
 
 type Tool = 'pen' | 'select' | 'eraser' | 'hand';
@@ -181,7 +183,7 @@ function startPointer(event: PointerEvent): void {
     if (strokeId) next = { type: 'move', pointerId: event.pointerId, strokeId, origin: world, current: world };
   } else if (effectiveTool === 'eraser' && event.button === 0) {
     const strokeId = hitAt(world);
-    next = { type: 'erase', pointerId: event.pointerId, strokeIds: strokeId ? [strokeId] : [] };
+    next = { type: 'erase', pointerId: event.pointerId, strokeIds: strokeId ? [strokeId] : [], current: world };
   }
 
   if (next) {
@@ -199,7 +201,15 @@ function movePointer(event: PointerEvent): void {
   if (activeGesture.type === 'pan') {
     activeGesture = updateGesture(activeGesture, event.pointerId, { screen: screenPoint(event) });
   } else if (activeGesture.type === 'erase') {
-    activeGesture = updateGesture(activeGesture, event.pointerId, { erasedStrokeId: hitAt(worldPoint(event)) });
+    const world = worldPoint(event);
+    const strokeIds = hitTestStrokesAlongSegment(
+      model.strokes,
+      activeGesture.current,
+      world,
+      7 / viewport.zoom,
+      new Set(activeGesture.strokeIds),
+    ).map(({ id }) => id);
+    activeGesture = updateGesture(activeGesture, event.pointerId, { world, erasedStrokeIds: strokeIds });
   } else {
     activeGesture = updateGesture(activeGesture, event.pointerId, { world: worldPoint(event) });
   }
@@ -265,8 +275,11 @@ function isEditable(target: EventTarget | null): boolean {
 canvas.addEventListener('pointerdown', startPointer);
 canvas.addEventListener('pointermove', movePointer);
 canvas.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', cancelActiveGesture);
-canvas.addEventListener('lostpointercapture', cancelActiveGesture);
+const cancelPointerGesture = (event: PointerEvent): void => {
+  if (ownsGesturePointer(activeGesture, event.pointerId)) cancelActiveGesture();
+};
+canvas.addEventListener('pointercancel', cancelPointerGesture);
+canvas.addEventListener('lostpointercapture', cancelPointerGesture);
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 canvas.addEventListener('wheel', (event) => {
   if (activeGesture) return;
@@ -349,6 +362,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (command || event.altKey) return;
   if (event.code === 'Space') {
+    if (!isSpacePanTarget(event.target, canvas, document.body)) return;
     spacePressed = true;
     event.preventDefault();
     return;

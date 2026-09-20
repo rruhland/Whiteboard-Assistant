@@ -37,7 +37,11 @@ export function zoomAt(viewport: Viewport, screen: { x: number; y: number }, fac
   return { x: screen.x - world.x * zoom, y: screen.y - world.y * zoom, zoom };
 }
 
-function distanceSquaredToSegment(point: { x: number; y: number }, start: Point, end: Point): number {
+function distanceSquaredToSegment(
+  point: { x: number; y: number },
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): number {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const lengthSquared = dx * dx + dy * dy;
@@ -46,6 +50,54 @@ function distanceSquaredToSegment(point: { x: number; y: number }, start: Point,
   const x = start.x + t * dx;
   const y = start.y + t * dy;
   return (point.x - x) ** 2 + (point.y - y) ** 2;
+}
+
+function cross(
+  first: { x: number; y: number },
+  second: { x: number; y: number },
+  third: { x: number; y: number },
+): number {
+  return (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x);
+}
+
+function segmentsIntersect(
+  firstStart: { x: number; y: number },
+  firstEnd: { x: number; y: number },
+  secondStart: { x: number; y: number },
+  secondEnd: { x: number; y: number },
+): boolean {
+  const firstSideStart = cross(firstStart, firstEnd, secondStart);
+  const firstSideEnd = cross(firstStart, firstEnd, secondEnd);
+  const secondSideStart = cross(secondStart, secondEnd, firstStart);
+  const secondSideEnd = cross(secondStart, secondEnd, firstEnd);
+  if (firstSideStart * firstSideEnd < 0 && secondSideStart * secondSideEnd < 0) return true;
+  const epsilon = 1e-9;
+  const onSegment = (point: { x: number; y: number }, start: { x: number; y: number }, end: { x: number; y: number }): boolean => (
+    Math.abs(cross(start, end, point)) <= epsilon
+    && point.x >= Math.min(start.x, end.x) - epsilon
+    && point.x <= Math.max(start.x, end.x) + epsilon
+    && point.y >= Math.min(start.y, end.y) - epsilon
+    && point.y <= Math.max(start.y, end.y) + epsilon
+  );
+  return onSegment(secondStart, firstStart, firstEnd)
+    || onSegment(secondEnd, firstStart, firstEnd)
+    || onSegment(firstStart, secondStart, secondEnd)
+    || onSegment(firstEnd, secondStart, secondEnd);
+}
+
+function distanceSquaredBetweenSegments(
+  firstStart: Point,
+  firstEnd: Point,
+  secondStart: { x: number; y: number },
+  secondEnd: { x: number; y: number },
+): number {
+  if (segmentsIntersect(firstStart, firstEnd, secondStart, secondEnd)) return 0;
+  return Math.min(
+    distanceSquaredToSegment(secondStart, firstStart, firstEnd),
+    distanceSquaredToSegment(secondEnd, firstStart, firstEnd),
+    distanceSquaredToSegment(firstStart, secondStart, secondEnd),
+    distanceSquaredToSegment(firstEnd, secondStart, secondEnd),
+  );
 }
 
 export function hitTestStroke(strokes: Stroke[], world: { x: number; y: number }, tolerance: number): Stroke | undefined {
@@ -64,4 +116,34 @@ export function hitTestStroke(strokes: Stroke[], world: { x: number; y: number }
     }
   }
   return undefined;
+}
+
+export function hitTestStrokesAlongSegment(
+  strokes: Stroke[],
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  tolerance: number,
+  excludedIds: ReadonlySet<string> = new Set(),
+): Stroke[] {
+  finite(start.x, 'start.x');
+  finite(start.y, 'start.y');
+  finite(end.x, 'end.x');
+  finite(end.y, 'end.y');
+  finite(tolerance, 'tolerance');
+  if (tolerance < 0) throw new Error('tolerance must not be negative');
+  const hits: Stroke[] = [];
+  for (let index = strokes.length - 1; index >= 0; index -= 1) {
+    const stroke = strokes[index];
+    if (excludedIds.has(stroke.id)) continue;
+    const radius = stroke.width / 2 + tolerance;
+    for (let pointIndex = 0; pointIndex < stroke.points.length; pointIndex += 1) {
+      const strokeEnd = stroke.points[pointIndex];
+      const strokeStart = stroke.points[pointIndex - 1] ?? strokeEnd;
+      if (distanceSquaredBetweenSegments(strokeStart, strokeEnd, start, end) <= radius * radius) {
+        hits.push(stroke);
+        break;
+      }
+    }
+  }
+  return hits;
 }

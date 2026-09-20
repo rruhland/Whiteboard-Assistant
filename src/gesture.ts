@@ -2,7 +2,7 @@ import type { Point, Viewport } from './board';
 
 export type InkGesture = { type: 'ink'; pointerId: number; points: Point[] };
 export type MoveGesture = { type: 'move'; pointerId: number; strokeId: string; origin: Point; current: Point };
-export type EraseGesture = { type: 'erase'; pointerId: number; strokeIds: string[] };
+export type EraseGesture = { type: 'erase'; pointerId: number; strokeIds: string[]; current: Point };
 export type PanGesture = {
   type: 'pan';
   pointerId: number;
@@ -16,7 +16,7 @@ export type Gesture = InkGesture | MoveGesture | EraseGesture | PanGesture;
 export type GestureUpdate = {
   world?: Point;
   screen?: { x: number; y: number };
-  erasedStrokeId?: string;
+  erasedStrokeIds?: string[];
 };
 
 export type GestureCommit =
@@ -29,6 +29,10 @@ export function beginGesture(active: Gesture | null, next: Gesture): Gesture {
   return active ?? next;
 }
 
+export function ownsGesturePointer(gesture: Gesture | null, pointerId: number): boolean {
+  return gesture?.pointerId === pointerId;
+}
+
 export function updateGesture(gesture: Gesture, pointerId: number, update: GestureUpdate): Gesture {
   if (gesture.pointerId !== pointerId) return gesture;
   if (gesture.type === 'ink' && update.world) {
@@ -37,8 +41,10 @@ export function updateGesture(gesture: Gesture, pointerId: number, update: Gestu
   if (gesture.type === 'move' && update.world) {
     return { ...gesture, current: update.world };
   }
-  if (gesture.type === 'erase' && update.erasedStrokeId && !gesture.strokeIds.includes(update.erasedStrokeId)) {
-    return { ...gesture, strokeIds: [...gesture.strokeIds, update.erasedStrokeId] };
+  if (gesture.type === 'erase') {
+    const additions = (update.erasedStrokeIds ?? []).filter((id) => !gesture.strokeIds.includes(id));
+    const strokeIds = additions.length ? [...gesture.strokeIds, ...additions] : gesture.strokeIds;
+    return { ...gesture, strokeIds, current: update.world ?? gesture.current };
   }
   if (gesture.type === 'pan' && update.screen) {
     return { ...gesture, currentScreen: update.screen };

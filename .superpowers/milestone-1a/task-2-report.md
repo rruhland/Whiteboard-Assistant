@@ -60,3 +60,33 @@ The browser reliability pass also covered 2× DPR backing resolution and world c
 ## Known limits
 
 The documented Milestone 1A scope remains: erasing is whole-stroke, selection is one stroke, touch pinch and palm rejection are not guaranteed, and graph/model/import features beyond board JSON are deferred.
+
+## Final review fix pass
+
+The final review reproduced four input edge cases. Focused tests were added before the fixes; the first run failed in the expected places because swept geometry, pointer ownership, and Space routing did not yet exist:
+
+```text
+npm test -- --run tests/core.test.ts tests/gesture.test.ts tests/input.test.ts
+Test Files  3 failed (3)
+Tests       3 failed | 16 passed (19)
+```
+
+The repair keeps the previous eraser point, collects every stroke crossed by the swept world-coordinate segment, skips IDs already hidden by the erase preview, matches cancel/lost-capture events to the active pointer, and reserves Space-pan for the canvas or page background so focused buttons retain native Space activation. The final focused run passed 21/21.
+
+Fresh final verification after the complete fix pass:
+
+```text
+npm test
+Test Files  4 passed (4)
+Tests      27 passed (27)
+
+npm run build
+tsc --noEmit && vite build
+11 modules transformed
+exit 0
+
+git diff --check
+exit 0
+```
+
+The assertion-based Chromium edge rerun against the rebuilt production preview passed all four corrected outcomes: a fast swept erase left 0 strokes, overlapping drag erase left 0 strokes, an unrelated pointer cancellation preserved and committed 1 active-pointer stroke, and Space activated the focused Hand button (`aria-pressed="true"`).

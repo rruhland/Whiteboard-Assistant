@@ -3,6 +3,7 @@ import type { Point, Viewport } from '../src/board';
 import {
   beginGesture,
   finishGesture,
+  ownsGesturePointer,
   updateGesture,
   type Gesture,
 } from '../src/gesture';
@@ -41,10 +42,10 @@ describe('gesture state', () => {
   });
 
   it('collects each erased stroke once and commits only when the gesture finishes', () => {
-    let gesture: Gesture = { type: 'erase', pointerId: 5, strokeIds: [] };
-    gesture = updateGesture(gesture, 5, { erasedStrokeId: 'stroke-a' });
-    gesture = updateGesture(gesture, 5, { erasedStrokeId: 'stroke-a' });
-    gesture = updateGesture(gesture, 5, { erasedStrokeId: 'stroke-b' });
+    let gesture: Gesture = { type: 'erase', pointerId: 5, strokeIds: [], current: point(0, 0) };
+    gesture = updateGesture(gesture, 5, { erasedStrokeIds: ['stroke-a'] });
+    gesture = updateGesture(gesture, 5, { erasedStrokeIds: ['stroke-a'] });
+    gesture = updateGesture(gesture, 5, { erasedStrokeIds: ['stroke-b'] });
 
     expect(finishGesture(gesture, 5)).toEqual({ type: 'erase', strokeIds: ['stroke-a', 'stroke-b'] });
   });
@@ -63,5 +64,12 @@ describe('gesture state', () => {
 
     expect(finishGesture(gesture, 9)).toEqual({ type: 'pan', viewport: { x: 50, y: -25, zoom: 2 } });
     expect(viewport).toEqual({ x: 20, y: -5, zoom: 2 });
+  });
+
+  it('does not give unrelated pointer cancellation ownership of an active gesture', () => {
+    const gesture: Gesture = { type: 'ink', pointerId: 4, points: [point(1, 1)] };
+
+    expect(ownsGesturePointer(gesture, 999)).toBe(false);
+    expect(ownsGesturePointer(gesture, 4)).toBe(true);
   });
 });
