@@ -54,6 +54,24 @@ describe('BoardModel', () => {
     expect(model.canUndo).toBe(true);
   });
 
+  test('undoing an erased lower stroke restores draw order and hit testing after reload', () => {
+    const model = new BoardModel();
+    model.addStroke([point(0, 0)], '#a', 4);
+    const lowerId = model.strokes[0].id;
+    model.addStroke([point(0, 0)], '#b', 4);
+    const upperId = model.strokes[1].id;
+    expect(hitTestStroke(model.strokes, { x: 0, y: 0 }, 0)?.id).toBe(upperId);
+
+    model.eraseStroke(lowerId);
+    model.undo();
+    expect(model.strokes.map((stroke) => stroke.id)).toEqual([lowerId, upperId]);
+    expect(hitTestStroke(model.strokes, { x: 0, y: 0 }, 0)?.id).toBe(upperId);
+
+    const reloaded = new BoardModel(model.toDocument(viewport));
+    expect(reloaded.strokes.map((stroke) => stroke.id)).toEqual([lowerId, upperId]);
+    expect(hitTestStroke(reloaded.strokes, { x: 0, y: 0 }, 0)?.id).toBe(upperId);
+  });
+
   test('a new edit after undo clears redo without deleting prior events', () => {
     const model = new BoardModel();
     model.addStroke([point(0, 0)], '#000', 2);

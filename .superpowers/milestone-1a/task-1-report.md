@@ -12,3 +12,5 @@ Verification:
 - `npm run build` — TypeScript passed, then Vite stopped because Task 2 has not added the required `index.html` entry yet.
 
 Concern: the production build is intentionally incomplete until the canvas UI task adds `index.html`; no UI files were added in this task.
+
+Review fix: preserved stable internal draw-order ranks across erase, undo, redo, and replay without changing the document schema. Added a regression covering live and reloaded ordering and topmost hit testing. The full core suite now passes with 11 tests.

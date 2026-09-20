@@ -144,6 +144,9 @@ function inverseChanges(changes: StrokeChange[]): StrokeChange[] {
 
 type ReplayState = {
   strokes: Map<string, Stroke>;
+  strokeOrder: string[];
+  orderRanks: Map<string, number>;
+  nextOrderRank: number;
   events: BoardEvent[];
   undoStack: BoardEvent[];
   redoStack: BoardEvent[];
@@ -188,14 +191,32 @@ function applyChanges(state: ReplayState, event: BoardEvent): void {
   for (const change of changes) {
     const id = change.after?.id ?? change.before?.id;
     if (!id) continue;
-    if (change.after === null) state.strokes.delete(id);
-    else state.strokes.set(id, cloneStroke(change.after));
+    if (change.after === null) {
+      state.strokes.delete(id);
+      const orderIndex = state.strokeOrder.indexOf(id);
+      if (orderIndex >= 0) state.strokeOrder.splice(orderIndex, 1);
+    } else {
+      if (!state.orderRanks.has(id)) {
+        state.orderRanks.set(id, state.nextOrderRank);
+        state.nextOrderRank += 1;
+      }
+      state.strokes.set(id, cloneStroke(change.after));
+      if (!state.strokeOrder.includes(id)) {
+        const rank = state.orderRanks.get(id) as number;
+        const insertionIndex = state.strokeOrder.findIndex((existingId) => (state.orderRanks.get(existingId) as number) > rank);
+        if (insertionIndex < 0) state.strokeOrder.push(id);
+        else state.strokeOrder.splice(insertionIndex, 0, id);
+      }
+    }
   }
 }
 
 function replay(document: BoardDocument): ReplayState {
   const state: ReplayState = {
     strokes: new Map(),
+    strokeOrder: [],
+    orderRanks: new Map(),
+    nextOrderRank: 0,
     events: [],
     undoStack: [],
     redoStack: [],
@@ -264,6 +285,9 @@ function emptyDocument(): BoardDocument {
 export class BoardModel {
   private readonly eventLog: BoardEvent[];
   private readonly strokeMap: Map<string, Stroke>;
+  private readonly strokeOrder: string[];
+  private readonly orderRanks: Map<string, number>;
+  private nextOrderRank: number;
   private undoStack: BoardEvent[];
   private redoStack: BoardEvent[];
 
@@ -272,12 +296,15 @@ export class BoardModel {
     const state = replay(validated);
     this.eventLog = state.events;
     this.strokeMap = state.strokes;
+    this.strokeOrder = state.strokeOrder;
+    this.orderRanks = state.orderRanks;
+    this.nextOrderRank = state.nextOrderRank;
     this.undoStack = state.undoStack;
     this.redoStack = state.redoStack;
   }
 
   get strokes(): Stroke[] {
-    return [...this.strokeMap.values()].map(cloneStroke);
+    return this.strokeOrder.map((id) => this.strokeMap.get(id)).filter((stroke): stroke is Stroke => stroke !== undefined).map(cloneStroke);
   }
 
   get events(): BoardEvent[] {
@@ -332,7 +359,8 @@ export class BoardModel {
   }
 
   private commit(event: BoardEvent): void {
-    applyChanges({ strokes: this.strokeMap, events: this.eventLog, undoStack: this.undoStack, redoStack: this.redoStack, eventById: new Map() }, event);
+    applyChanges({ strokes: this.strokeMap, strokeOrder: this.strokeOrder, orderRanks: this.orderRanks, nextOrderRank: this.nextOrderRank, events: this.eventLog, undoStack: this.undoStack, redoStack: this.redoStack, eventById: new Map() }, event);
+    this.nextOrderRank = Math.max(...this.orderRanks.values(), -1) + 1;
     this.eventLog.push(cloneEvent(event));
     this.undoStack.push(cloneEvent(event));
     this.redoStack = [];
@@ -347,7 +375,8 @@ export class BoardModel {
       targetId: target.id,
       changes: kind === 'undo' ? inverseChanges(target.changes) : target.changes.map(cloneChange),
     };
-    applyChanges({ strokes: this.strokeMap, events: this.eventLog, undoStack: this.undoStack, redoStack: this.redoStack, eventById: new Map() }, event);
+    applyChanges({ strokes: this.strokeMap, strokeOrder: this.strokeOrder, orderRanks: this.orderRanks, nextOrderRank: this.nextOrderRank, events: this.eventLog, undoStack: this.undoStack, redoStack: this.redoStack, eventById: new Map() }, event);
+    this.nextOrderRank = Math.max(...this.orderRanks.values(), -1) + 1;
     this.eventLog.push(cloneEvent(event));
     if (kind === 'undo') {
       this.undoStack.pop();
