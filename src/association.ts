@@ -40,7 +40,18 @@ function clone<T>(value: T): T {
 }
 
 function same(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => same(value, right[index]));
+  }
+  if (typeof left === 'object' && left !== null && typeof right === 'object' && right !== null) {
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    return leftKeys.length === rightKeys.length && leftKeys.every((key) => key in rightRecord && same(leftRecord[key], rightRecord[key]));
+  }
+  return false;
 }
 
 function idFor(prefix: string): string {
@@ -117,6 +128,74 @@ function validateLineage(objects: Map<string, WorkObject>): void {
   for (const id of objects.keys()) visit(id);
 }
 
+function sameMembers(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && new Set(left).size === left.length && left.every((id) => right.includes(id));
+}
+
+function assertNewObject(change: ObjectChange, event: AssociationEvent): WorkObject {
+  if (change.before !== null || !change.after || change.after.status !== 'active' || change.after.parentIds.length !== 0 || change.after.strokeIds.length !== 1) {
+    throw new Error(`${event.kind} event ${event.id} must create one active single-stroke object`);
+  }
+  if (change.after.createdAt !== event.time || change.after.lastAssociatedAt !== event.time) {
+    throw new Error(`${event.kind} event ${event.id} must use its event time`);
+  }
+  return change.after;
+}
+
+function assertAppend(change: ObjectChange, event: AssociationEvent): void {
+  const { before, after } = change;
+  if (!before || !after || before.status !== 'active' || after.status !== 'active' || after.strokeIds.length !== before.strokeIds.length + 1) {
+    throw new Error(`${event.kind} event ${event.id} must append one stroke to an active object`);
+  }
+  const expected = { ...clone(before), strokeIds: [...before.strokeIds, after.strokeIds.at(-1) as string], lastAssociatedAt: event.time };
+  if (!same(after, expected)) throw new Error(`${event.kind} event ${event.id} changes fields other than membership and activity time`);
+}
+
+function validateEventSemantics(event: AssociationEvent): void {
+  if (event.kind === 'auto-create') {
+    if (event.actor !== 'system' || event.changes.length !== 1) throw new Error(`auto-create event ${event.id} requires one system change`);
+    assertNewObject(event.changes[0], event);
+    return;
+  }
+  if (event.kind === 'auto-append') {
+    if (event.actor !== 'system' || event.changes.length !== 1) throw new Error(`auto-append event ${event.id} requires one system change`);
+    assertAppend(event.changes[0], event);
+    return;
+  }
+  if (event.kind === 'manual-assign') {
+    if (event.actor !== 'user' || event.changes.length !== 1) throw new Error(`manual-assign event ${event.id} requires one user change`);
+    if (event.changes[0].before === null) assertNewObject(event.changes[0], event);
+    else assertAppend(event.changes[0], event);
+    return;
+  }
+  if (event.actor !== 'user') throw new Error(`${event.kind} event ${event.id} must be performed by a user`);
+  const updates = event.changes.filter((change): change is { before: WorkObject; after: WorkObject } => change.before !== null && change.after !== null);
+  const creations = event.changes.filter((change): change is { before: null; after: WorkObject } => change.before === null && change.after !== null);
+  if (updates.length + creations.length !== event.changes.length) throw new Error(`${event.kind} event ${event.id} cannot delete objects`);
+  for (const { before, after } of updates) {
+    if (before.status !== 'active' || !same(after, { ...clone(before), status: 'superseded' })) {
+      throw new Error(`${event.kind} event ${event.id} must supersede its active parent objects`);
+    }
+  }
+  if (event.kind === 'manual-merge') {
+    if (updates.length < 2 || creations.length !== 1) throw new Error(`manual-merge event ${event.id} requires at least two parents and one child`);
+    const child = creations[0].after;
+    const parentIds = updates.map(({ before }) => before.id).sort();
+    const memberIds = [...new Set(updates.flatMap(({ before }) => before.strokeIds))];
+    if (child.status !== 'active' || !same(child.parentIds, parentIds) || !sameMembers(child.strokeIds, memberIds) || child.createdAt !== event.time || child.lastAssociatedAt !== event.time) {
+      throw new Error(`manual-merge event ${event.id} has invalid child lineage or membership`);
+    }
+    return;
+  }
+  if (updates.length !== 1 || creations.length !== 2) throw new Error(`manual-split event ${event.id} requires one parent and two children`);
+  const parent = updates[0].before;
+  const childMembers = creations.flatMap(({ after }) => after.strokeIds);
+  if (creations.some(({ after }) => after.status !== 'active' || !same(after.parentIds, [parent.id]) || after.strokeIds.length === 0 || after.createdAt !== event.time || after.lastAssociatedAt !== event.time)
+    || !sameMembers(childMembers, parent.strokeIds)) {
+    throw new Error(`manual-split event ${event.id} has invalid child lineage or membership`);
+  }
+}
+
 function replay(events: readonly AssociationEvent[], knownStrokeIds: ReadonlySet<string>): ReplayResult {
   const objects = new Map<string, WorkObject>();
   const eventIds = new Set<string>();
@@ -141,6 +220,7 @@ function replay(events: readonly AssociationEvent[], knownStrokeIds: ReadonlySet
         throw new Error(`Association event ${event.id} has wrong before state for ${id}`);
       }
     }
+    validateEventSemantics(event);
     for (const change of event.changes) {
       const id = change.after?.id ?? change.before?.id as string;
       if (change.after) {

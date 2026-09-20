@@ -23,14 +23,15 @@ export type ObjectPanelActions = {
 export type ObjectOverlay = { id: string; label: string; bounds: Bounds; selected: boolean; color: string };
 export type GraphLayoutNode = { id: string; x: number; y: number };
 
-export function derivePanelControls(state: ObjectPanelState): { canMerge: boolean; canSplit: boolean; canAssign: boolean } {
+export function derivePanelControls(state: ObjectPanelState): { canMerge: boolean; canSplit: boolean; canAssignToChecked: boolean; canCreateObject: boolean } {
   const checkedActive = state.nodes.filter(({ id, status }) => status === 'active' && state.checkedObjectIds.has(id));
   const selectedOwner = state.nodes.find(({ status, strokeIds }) => status === 'active' && state.selectedStrokeId !== null && strokeIds.includes(state.selectedStrokeId));
   const isUnassigned = state.selectedStrokeId !== null && state.unassignedStrokeIds.includes(state.selectedStrokeId);
   return {
     canMerge: checkedActive.length >= 2,
     canSplit: Boolean(selectedOwner && selectedOwner.strokeIds.length >= 2),
-    canAssign: isUnassigned && checkedActive.length <= 1,
+    canAssignToChecked: isUnassigned && checkedActive.length === 1,
+    canCreateObject: isUnassigned,
   };
 }
 
@@ -106,7 +107,7 @@ export class ObjectPanel {
       <div class="object-overview"><span><strong>${activeCount}</strong> active</span><span><strong>${state.unassignedStrokeIds.length}</strong> unassigned</span><label><input type="checkbox" data-overlay ${state.overlayEnabled ? 'checked' : ''} /> Bounds</label></div>
       <section><div class="section-heading"><h3>Map</h3><span><i class="near-key"></i> near <i class="lineage-key"></i> lineage</span></div><svg class="object-graph" viewBox="0 0 280 150" role="img" aria-label="Work object graph">${edgeMarkup}${nodeMarkup}</svg></section>
       <section><h3>Objects</h3><ul class="object-list">${rows}</ul></section>
-      <section class="corrections"><h3>Correct grouping</h3><div class="correction-actions"><button type="button" data-merge ${controls.canMerge ? '' : 'disabled'}>Merge checked</button><button type="button" data-split ${controls.canSplit ? '' : 'disabled'}>Split selected stroke</button><button type="button" data-assign ${controls.canAssign && state.checkedObjectIds.size === 1 ? '' : 'disabled'}>Assign to checked</button><button type="button" data-assign-new ${controls.canAssign ? '' : 'disabled'}>New object</button></div><p class="panel-status" aria-live="polite">${escapeHtml(this.status)}</p></section>
+      <section class="corrections"><h3>Correct grouping</h3><div class="correction-actions"><button type="button" data-merge ${controls.canMerge ? '' : 'disabled'}>Merge checked</button><button type="button" data-split ${controls.canSplit ? '' : 'disabled'}>Split selected stroke</button><button type="button" data-assign ${controls.canAssignToChecked ? '' : 'disabled'}>Assign to checked</button><button type="button" data-assign-new ${controls.canCreateObject ? '' : 'disabled'}>New object</button></div><p class="panel-status" aria-live="polite">${escapeHtml(this.status)}</p></section>
       <section><h3>Details</h3>${details}</section>`;
     this.bind(state);
   }
@@ -119,8 +120,10 @@ export class ObjectPanel {
       this.actions.onCheckedObjectsChange(checked);
       const merge = this.root.querySelector<HTMLButtonElement>('[data-merge]');
       const assign = this.root.querySelector<HTMLButtonElement>('[data-assign]');
+      const assignNew = this.root.querySelector<HTMLButtonElement>('[data-assign-new]');
       if (merge) merge.disabled = checked.size < 2;
       if (assign) assign.disabled = !state.selectedStrokeId || !state.unassignedStrokeIds.includes(state.selectedStrokeId) || checked.size !== 1;
+      if (assignNew) assignNew.disabled = !state.selectedStrokeId || !state.unassignedStrokeIds.includes(state.selectedStrokeId);
     }));
     this.root.querySelectorAll<HTMLElement>('[data-select-object]').forEach((element) => element.addEventListener('click', () => {
       this.actions.onSelectObject(element.dataset.selectObject as string);

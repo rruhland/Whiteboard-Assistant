@@ -13,12 +13,12 @@ function state(overrides: Partial<ObjectPanelState> = {}): ObjectPanelState {
 
 describe('object panel view model', () => {
   test('enables merge and split for eligible selections', () => {
-    expect(derivePanelControls(state())).toMatchObject({ canMerge: true, canSplit: true, canAssign: false });
+    expect(derivePanelControls(state())).toMatchObject({ canMerge: true, canSplit: true, canAssignToChecked: false, canCreateObject: false });
   });
 
   test('enables assignment only for an unassigned selected stroke and at most one checked target', () => {
-    expect(derivePanelControls(state({ selectedStrokeId: 'loose', unassignedStrokeIds: ['loose'], checkedObjectIds: new Set(['a']) })).canAssign).toBe(true);
-    expect(derivePanelControls(state({ selectedStrokeId: 'loose', unassignedStrokeIds: ['loose'] })).canAssign).toBe(false);
+    expect(derivePanelControls(state({ selectedStrokeId: 'loose', unassignedStrokeIds: ['loose'], checkedObjectIds: new Set(['a']) }))).toMatchObject({ canAssignToChecked: true, canCreateObject: true });
+    expect(derivePanelControls(state({ selectedStrokeId: 'loose', unassignedStrokeIds: ['loose'] }))).toMatchObject({ canAssignToChecked: false, canCreateObject: true });
   });
 
   test('normalizes graph coordinates for negative and zero-size bounds', () => {

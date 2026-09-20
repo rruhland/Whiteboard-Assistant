@@ -29,14 +29,13 @@ describe('AssociationModel', () => {
 
   test('breaks equal candidates by distance, recency, then stable ID', () => {
     const objects: WorkObject[] = [
-      { id: 'work-b', label: 'B', strokeIds: ['a'], createdAt: 0, lastAssociatedAt: 10, status: 'active', parentIds: [] },
-      { id: 'work-a', label: 'A', strokeIds: ['b'], createdAt: 0, lastAssociatedAt: 10, status: 'active', parentIds: [] },
+      { id: 'work-b', label: 'B', strokeIds: ['a'], createdAt: 10, lastAssociatedAt: 10, status: 'active', parentIds: [] },
+      { id: 'work-a', label: 'A', strokeIds: ['b'], createdAt: 10, lastAssociatedAt: 10, status: 'active', parentIds: [] },
     ];
-    const event: AssociationEvent = {
-      id: 'seed', time: 10, actor: 'system', kind: 'auto-create', reason: 'seed',
-      changes: objects.map((after) => ({ before: null, after })),
-    };
-    const model = new AssociationModel([event], ids);
+    const events: AssociationEvent[] = objects.map((after, index) => ({
+      id: `seed-${index}`, time: 10, actor: 'system', kind: 'auto-create', reason: 'seed', changes: [{ before: null, after }],
+    }));
+    const model = new AssociationModel(events, ids);
     expect(model.associateStroke(stroke('c', 10, 0, 11), all.slice(0, 3))).toBe('work-a');
   });
 
@@ -68,11 +67,27 @@ describe('AssociationModel', () => {
 
   test('rejects duplicate active membership and unknown strokes during replay', () => {
     const object = (id: string, strokeId: string): WorkObject => ({ id, label: id, strokeIds: [strokeId], createdAt: 0, lastAssociatedAt: 0, status: 'active', parentIds: [] });
-    const duplicate: AssociationEvent = { id: 'e', time: 0, actor: 'system', kind: 'auto-create', reason: '', changes: [
-      { before: null, after: object('one', 'a') }, { before: null, after: object('two', 'a') },
-    ] };
-    expect(() => new AssociationModel([duplicate], ids)).toThrow(/active membership/i);
-    expect(() => new AssociationModel([{ ...duplicate, changes: [{ before: null, after: object('one', 'missing') }] }], ids)).toThrow(/unknown stroke/i);
+    const first: AssociationEvent = { id: 'e1', time: 0, actor: 'system', kind: 'auto-create', reason: '', changes: [{ before: null, after: object('one', 'a') }] };
+    const duplicate: AssociationEvent = { id: 'e2', time: 0, actor: 'system', kind: 'auto-create', reason: '', changes: [{ before: null, after: object('two', 'a') }] };
+    expect(() => new AssociationModel([first, duplicate], ids)).toThrow(/active membership/i);
+    expect(() => new AssociationModel([{ ...first, changes: [{ before: null, after: object('one', 'missing') }] }], ids)).toThrow(/unknown stroke/i);
+  });
+
+  test('rejects structurally possible transitions that violate their event kind', () => {
+    const before: WorkObject = { id: 'one', label: 'A', strokeIds: ['a'], createdAt: 0, lastAssociatedAt: 0, status: 'active', parentIds: [] };
+    const seed: AssociationEvent = { id: 'seed', time: 0, actor: 'system', kind: 'auto-create', reason: '', changes: [{ before: null, after: before }] };
+    const impossible: AssociationEvent = { id: 'bad', time: 1, actor: 'system', kind: 'auto-append', reason: '', changes: [{ before, after: null }] };
+    expect(() => new AssociationModel([seed, impossible], ids)).toThrow(/auto-append/i);
+  });
+
+  test('accepts an equivalent before snapshot with reordered object keys', () => {
+    const before: WorkObject = { id: 'one', label: 'A', strokeIds: ['a'], createdAt: 0, lastAssociatedAt: 0, status: 'active', parentIds: [] };
+    const reordered = { parentIds: [], status: 'active' as const, lastAssociatedAt: 0, createdAt: 0, strokeIds: ['a'], label: 'A', id: 'one' };
+    const after: WorkObject = { ...before, strokeIds: ['a', 'b'], lastAssociatedAt: 1 };
+    expect(() => new AssociationModel([
+      { id: 'seed', time: 0, actor: 'system', kind: 'auto-create', reason: '', changes: [{ before: null, after: before }] },
+      { id: 'append', time: 1, actor: 'system', kind: 'auto-append', reason: '', changes: [{ before: reordered, after }] },
+    ], ids)).not.toThrow();
   });
 
   test('tracks unassigned strokes, bounds, migration, near edges, and lineage', () => {
