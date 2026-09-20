@@ -1,4 +1,5 @@
 import './style.css';
+import { getUnassignedVisibleStrokes, projectGraph } from './association';
 import { type Point } from './board';
 import { CanvasRenderer } from './canvas';
 import { serializeBoard } from './document';
@@ -11,6 +12,7 @@ import {
   type Gesture,
 } from './gesture';
 import { isSpacePanTarget } from './input';
+import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
 import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
 import { commitStroke, loadWorkspace, workspaceDocument, type WorkspaceState } from './workspace';
 
@@ -37,6 +39,9 @@ const editCount = element<HTMLElement>('#edit-count');
 const zoomLevel = element<HTMLElement>('#zoom-level');
 const saveStatus = element<HTMLElement>('#save-status');
 const onboarding = element<HTMLElement>('#onboarding');
+const objectsToggle = element<HTMLButtonElement>('#objects-toggle');
+const objectPanelRoot = element<HTMLElement>('#object-panel');
+const objectPanelBackdrop = element<HTMLButtonElement>('#object-panel-backdrop');
 
 let workspace: WorkspaceState = loadWorkspace({
   sourceVersion: 2,
@@ -51,12 +56,17 @@ let navigationSaveTimer = 0;
 let cachedEventCount = 0;
 let hasDrawn = false;
 let storage: StorageLike | null = null;
+let objectPanelOpen = false;
+let overlayEnabled = true;
+let checkedObjectIds = new Set<string>();
+let selectedObjectId: string | null = null;
 
 try {
   storage = window.localStorage;
   const restored = loadAutosave(storage);
   if (restored.document) {
     workspace = loadWorkspace(restored.document);
+    if (workspace.migratedFromVersion1) saveAutosave(storage, workspaceDocument(workspace));
     saveStatus.textContent = workspace.migratedFromVersion1 ? 'Restored and upgraded autosave' : 'Restored autosave';
   } else if (restored.error) {
     saveStatus.textContent = restored.error;
@@ -71,6 +81,85 @@ function currentDocument() {
   return workspaceDocument(workspace);
 }
 
+function panelState(): ObjectPanelState {
+  const graph = projectGraph(workspace.associations, workspace.board.strokes);
+  return {
+    ...graph,
+    selectedStrokeId: selectedId,
+    checkedObjectIds,
+    overlayEnabled,
+    unassignedStrokeIds: getUnassignedVisibleStrokes(workspace.associations, workspace.board.strokes).map(({ id }) => id),
+  };
+}
+
+function refreshPanel(): void {
+  objectsToggle.setAttribute('aria-expanded', String(objectPanelOpen));
+  objectPanelRoot.hidden = !objectPanelOpen;
+  objectPanelBackdrop.hidden = !objectPanelOpen;
+  if (objectPanelOpen) objectPanel.render(panelState());
+}
+
+function closeObjectPanel(): void {
+  objectPanelOpen = false;
+  refreshPanel();
+  objectsToggle.focus();
+}
+
+function finishAssociationCorrection(message: string): void {
+  const activeIds = new Set(workspace.associations.objects.filter(({ status }) => status === 'active').map(({ id }) => id));
+  checkedObjectIds = new Set([...checkedObjectIds].filter((id) => activeIds.has(id)));
+  objectPanel.setStatus(message);
+  updateControls();
+  scheduleRender();
+  persist();
+}
+
+function correction(action: () => string | readonly [string, string], success: string): void {
+  try {
+    action();
+    finishAssociationCorrection(success);
+  } catch (error) {
+    objectPanel.setStatus(error instanceof Error ? error.message : String(error));
+    refreshPanel();
+  }
+}
+
+const objectPanel = new ObjectPanel(objectPanelRoot, {
+  onClose: closeObjectPanel,
+  onToggleOverlay(enabled) { overlayEnabled = enabled; refreshPanel(); scheduleRender(); },
+  onCheckedObjectsChange(ids) { checkedObjectIds = new Set(ids); refreshPanel(); },
+  onMerge(ids) {
+    correction(() => {
+      const childId = workspace.associations.mergeObjects(ids);
+      selectedObjectId = childId;
+      checkedObjectIds = new Set([childId]);
+      return childId;
+    }, 'Objects merged');
+  },
+  onSplitSelectedStroke() {
+    correction(() => {
+      if (!selectedId) throw new Error('Select a stroke to split');
+      const strokeId = selectedId;
+      const owner = workspace.associations.objects.find(({ status, strokeIds }) => status === 'active' && strokeIds.includes(strokeId));
+      if (!owner) throw new Error('The selected stroke has no active object');
+      const children = workspace.associations.splitObject(owner.id, strokeId);
+      selectedObjectId = children[0];
+      checkedObjectIds = new Set(children);
+      return children;
+    }, 'Object split');
+  },
+  onAssignSelectedStroke(objectId) {
+    correction(() => {
+      if (!selectedId) throw new Error('Select an unassigned stroke');
+      const assignedId = workspace.associations.assignStroke(selectedId, objectId);
+      selectedObjectId = assignedId;
+      checkedObjectIds = new Set([assignedId]);
+      return assignedId;
+    }, objectId ? 'Stroke assigned' : 'Object created');
+  },
+  onSelectObject(id) { selectedObjectId = id; refreshPanel(); scheduleRender(); },
+});
+
 function refreshCachedMetadata(): void {
   cachedEventCount = workspace.board.events.length;
   hasDrawn = workspace.board.events.some((event) => event.kind === 'add');
@@ -82,6 +171,11 @@ function scheduleRender(): void {
   if (renderFrame) return;
   renderFrame = window.requestAnimationFrame(() => {
     renderFrame = 0;
+    const graph = projectGraph(workspace.associations, workspace.board.strokes);
+    const selectedObject = graph.nodes.find(({ id }) => id === selectedObjectId);
+    const objectOverlays: ObjectOverlay[] = overlayEnabled ? graph.nodes
+      .filter((node) => node.status === 'active' && node.bounds)
+      .map((node) => ({ id: node.id, label: node.label, bounds: node.bounds!, selected: node.id === selectedObjectId, color: node.id === selectedObjectId ? '#c66c28' : '#4d8790' })) : [];
     renderer.render({
       strokes: workspace.board.strokes,
       viewport: workspace.viewport,
@@ -89,6 +183,8 @@ function scheduleRender(): void {
       gesture: activeGesture,
       inkColor: colorInput.value,
       inkWidth: Number(widthInput.value),
+      objectOverlays,
+      selectedObjectStrokeIds: new Set(selectedObject?.strokeIds ?? []),
     });
   });
 }
@@ -104,6 +200,7 @@ function updateControls(): void {
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => {
     button.setAttribute('aria-pressed', String(button.dataset.tool === activeTool));
   });
+  refreshPanel();
 }
 
 function setStatus(message: string, state: 'normal' | 'error' = 'normal'): void {
@@ -230,8 +327,8 @@ function endPointer(event: PointerEvent): void {
 
   if (commit.type === 'ink') {
     const result = commitStroke(workspace, commit.points, colorInput.value, Number(widthInput.value));
-    if (result.associationError) setStatus(`Stroke saved; grouping failed: ${result.associationError}`, 'error');
     afterEdit();
+    if (result.associationError) setStatus(`Stroke saved; grouping failed: ${result.associationError}`, 'error');
   } else if (commit.type === 'move') {
     if (commit.dx !== 0 || commit.dy !== 0) {
       workspace.board.moveStroke(commit.strokeId, commit.dx, commit.dy);
@@ -339,11 +436,13 @@ fileInput.addEventListener('change', async () => {
     }
     workspace = loadWorkspace(result.document);
     selectedId = null;
+    selectedObjectId = null;
+    checkedObjectIds.clear();
     refreshCachedMetadata();
     updateControls();
     scheduleRender();
     if (result.error) setStatus(result.error, 'error');
-    else setStatus('Board opened and saved locally');
+    else if (persist()) setStatus(workspace.migratedFromVersion1 ? 'Board opened, upgraded, and saved locally' : 'Board opened and saved locally');
   } catch (error) {
     setStatus(`Open failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
   }
@@ -351,6 +450,11 @@ fileInput.addEventListener('change', async () => {
 
 window.addEventListener('keydown', (event) => {
   if (isEditable(event.target)) return;
+  if (event.key === 'Escape' && objectPanelOpen) {
+    event.preventDefault();
+    closeObjectPanel();
+    return;
+  }
   const command = event.ctrlKey || event.metaKey;
   if (command && event.key.toLowerCase() === 'z') {
     event.preventDefault();
@@ -392,6 +496,12 @@ window.addEventListener('blur', () => {
 });
 
 new ResizeObserver(scheduleRender).observe(canvas);
+objectsToggle.addEventListener('click', () => {
+  objectPanelOpen = !objectPanelOpen;
+  refreshPanel();
+  if (objectPanelOpen) objectPanelRoot.querySelector<HTMLElement>('button, input')?.focus();
+});
+objectPanelBackdrop.addEventListener('click', closeObjectPanel);
 canvas.dataset.tool = activeTool;
 updateControls();
 scheduleRender();

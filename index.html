@@ -50,6 +50,7 @@
         </div>
 
         <div class="tool-group file-actions" role="group" aria-label="Board file">
+          <button id="objects-toggle" class="text-button" aria-expanded="false" aria-controls="object-panel">Objects</button>
           <button id="open-board" class="text-button" title="Open a board JSON file">Open</button>
           <button id="save-board" class="text-button primary" title="Download a portable board JSON file">Save file</button>
           <input id="file-input" type="file" accept="application/json,.json" hidden />
@@ -68,6 +69,8 @@
           <button id="reset-view" title="Reset view">Reset</button>
           <button id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
         </div>
+        <button id="object-panel-backdrop" class="panel-backdrop" aria-label="Close objects panel" hidden></button>
+        <aside id="object-panel" class="object-panel" aria-label="Work objects" hidden></aside>
       </main>
 
       <footer class="status-bar">
