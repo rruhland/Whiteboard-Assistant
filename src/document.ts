@@ -1,5 +1,5 @@
 import { BoardModel, BOARD_ZOOM_LIMITS, type BoardEvent, type Viewport } from './board';
-import type { AssociationEvent, WorkObject } from './association';
+import { AssociationModel, type AssociationEvent, type WorkObject } from './association';
 
 export type BoardDocumentV1 = {
   version: 1;
@@ -104,7 +104,10 @@ export function parseBoard(json: string): ParsedBoard {
   const viewport = validateViewport(value.viewport);
   if (value.version === 1) return { sourceVersion: 1, document: { version: 1, events, viewport } };
   if (value.version === 2) {
-    return { sourceVersion: 2, document: { version: 2, events, associationEvents: validateAssociationEvents(value.associationEvents), viewport } };
+    const associationEvents = validateAssociationEvents(value.associationEvents);
+    const knownStrokeIds = new Set(events.flatMap(({ changes }) => changes.flatMap(({ before, after }) => [before?.id, after?.id].filter((id): id is string => id !== undefined))));
+    const validatedAssociations = new AssociationModel(associationEvents, knownStrokeIds).events;
+    return { sourceVersion: 2, document: { version: 2, events, associationEvents: validatedAssociations, viewport } };
   }
   throw new Error('Unsupported board document version');
 }
