@@ -62,13 +62,13 @@ class BoardModel {
 Test examples: add then move preserves ID; erase then undo restores original geometry; undo/add disables redo but retains old events; serialize/parse roundtrip; unsupported version/nonfinite geometry/duplicate IDs/invalid event references rejected; transforms invert at negative offsets; zoom holds cursor world point fixed; hit-testing segments and dots respects width/tolerance.
 
 ## Task 2 — Canvas application
-- [ ] Read core API and write failing tests for gesture/storage logic where behavior is nontrivial.
-- [ ] Implement index.html, src/main.ts, src/canvas.ts, src/style.css and small storage/gesture modules as needed.
-- [ ] Render on requestAnimationFrame, respecting devicePixelRatio; keep preview edits outside document until pointerup.
-- [ ] Connect accessible Pen/Select/Eraser/Hand, color/width, undo/redo, zoom/reset view, Save file/Open file controls.
-- [ ] Implement one active pointer with capture, cancellation, space/middle-button pan, wheel zoom, click/drag selection, and keyboard undo/redo/delete.
-- [ ] Use validated local autosave and file import/export. Ignore shortcuts while editing native input controls. Show errors; never erase current work after a failed import.
-- [ ] Write README, add GitHub Actions npm ci/test/build, verify full test suite and build, commit and report.
+- [x] Read core API and write failing tests for gesture/storage logic where behavior is nontrivial.
+- [x] Implement index.html, src/main.ts, src/canvas.ts, src/style.css and small storage/gesture modules as needed.
+- [x] Render on requestAnimationFrame, respecting devicePixelRatio; keep preview edits outside document until pointerup.
+- [x] Connect accessible Pen/Select/Eraser/Hand, color/width, undo/redo, zoom/reset view, Save file/Open file controls.
+- [x] Implement one active pointer with capture, cancellation, space/middle-button pan, wheel zoom, click/drag selection, and keyboard undo/redo/delete.
+- [x] Use validated local autosave and file import/export. Ignore shortcuts while editing native input controls. Show errors; never erase current work after a failed import.
+- [x] Write README, add GitHub Actions npm ci/test/build, verify full test suite and build, commit and report.
 - [ ] Independent task review and browser smoke verification, then fixes if required.
 
 Browser verification: draw a line and dot, pan, zoom, draw under new transform, move/erase, undo/redo, export and inspect JSON, reopen/reload, import malformed data, exercise pointer cancellation and a resized viewport. Save screenshots under ignored output/playwright.
