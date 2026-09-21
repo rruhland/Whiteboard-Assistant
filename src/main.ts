@@ -269,7 +269,9 @@ const assistantPanel = new AssistantPanel(assistantPanelRoot, {
   onApprove(kind) {
     if (isHistorical()) return;
     try {
-      const generationId = assistantSession.proposals?.generationId;
+      const generationId = kind === 'active-area-circle'
+        ? assistantSession.proposals?.circle.proposal?.generationId
+        : assistantSession.proposals?.arrow.proposal?.generationId;
       const result = approveAssistantProposal(workspace, historySession, assistantSession, kind, Date.now());
       assistantSession = afterWorkspaceMutation(result.session, 'assistant-approval', generationId);
       selectedObjectId = result.annotationId;

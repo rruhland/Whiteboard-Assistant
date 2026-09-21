@@ -55,7 +55,12 @@ export function regenerateAssistantSlot(workspace: WorkspaceState, history: Hist
   const next = cloneSession(session);
   if (!next.proposals) throw new Error('No assistant proposals are available');
   const current = next.proposals[slotName(kind)];
-  const afterCandidateIndex = current.proposal?.candidateIndex ?? -1;
+  const currentRevision = revisionOf(workspaceDocument(workspace));
+  const afterCandidateIndex = current.proposal
+    && current.proposal.revision.inkEventCount === currentRevision.inkEventCount
+    && current.proposal.revision.associationEventCount === currentRevision.associationEventCount
+    ? current.proposal.candidateIndex
+    : -1;
   const slot = regenerateProposal(kind, workspaceDocument(workspace), history.index, workspace.associations, next.rejectedFingerprints, afterCandidateIndex);
   next.proposals = replaceSlot(next.proposals, kind, slot);
   return next;
@@ -86,8 +91,10 @@ export function afterWorkspaceMutation(session: AssistantSession, mutation: Work
   if (mutation !== 'assistant-approval') return invalidateAssistantSession(session);
   const next = cloneSession(session);
   if (!next.proposals) return next;
+  const approvedProposal = [next.proposals.circle.proposal, next.proposals.arrow.proposal].find((proposal) => proposal?.state === 'approved');
+  const coordinatedGenerationId = approvedProposal?.generationId ?? approvedGenerationId;
   for (const slot of [next.proposals.circle, next.proposals.arrow]) {
-    if (!slot.proposal || slot.proposal.generationId === approvedGenerationId) continue;
+    if (!slot.proposal || slot.proposal.state === 'approved' || slot.proposal.state === 'rejected' || slot.proposal.generationId === coordinatedGenerationId) continue;
     slot.proposal.state = 'stale';
     slot.proposal.visible = false;
     slot.message = 'Canvas changed. Regenerate this suggestion.';

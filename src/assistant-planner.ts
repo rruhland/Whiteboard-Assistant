@@ -145,11 +145,12 @@ function overlapArea(left: Bounds, right: Bounds): number {
 function arrowRaw(bounds: Bounds, directionIndex: number, offset: number): Array<Pick<Stroke, 'color' | 'width' | 'points'>> {
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
-  let tip = { x: bounds.maxX, y: centerY + offset };
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  let tip = { x: bounds.maxX, y: clamp(centerY + offset, bounds.minY, bounds.maxY) };
   let start = { x: bounds.maxX + 64, y: centerY + offset };
-  if (directionIndex === 1) { tip = { x: bounds.minX, y: centerY + offset }; start = { x: bounds.minX - 64, y: centerY + offset }; }
-  if (directionIndex === 2) { tip = { x: centerX + offset, y: bounds.maxY }; start = { x: centerX + offset, y: bounds.maxY + 64 }; }
-  if (directionIndex === 3) { tip = { x: centerX + offset, y: bounds.minY }; start = { x: centerX + offset, y: bounds.minY - 64 }; }
+  if (directionIndex === 1) { tip = { x: bounds.minX, y: clamp(centerY + offset, bounds.minY, bounds.maxY) }; start = { x: bounds.minX - 64, y: centerY + offset }; }
+  if (directionIndex === 2) { tip = { x: clamp(centerX + offset, bounds.minX, bounds.maxX), y: bounds.maxY }; start = { x: centerX + offset, y: bounds.maxY + 64 }; }
+  if (directionIndex === 3) { tip = { x: clamp(centerX + offset, bounds.minX, bounds.maxX), y: bounds.minY }; start = { x: centerX + offset, y: bounds.minY - 64 }; }
   const angle = Math.atan2(start.y - tip.y, start.x - tip.x);
   const head = (sign: number) => ({ x: tip.x + 16 * Math.cos(angle + sign * 0.55), y: tip.y + 16 * Math.sin(angle + sign * 0.55), pressure: 0.5, time: 0 });
   const point = (value: { x: number; y: number }) => ({ x: cleanNumber(value.x), y: cleanNumber(value.y), pressure: 0.5, time: 0 });
@@ -200,8 +201,8 @@ function slotFor(
     return { kind, proposal: null, message: 'No unused circle candidates remain' };
   }
   const candidates = arrowCandidates(target.bounds, target.object, visibleState(document, index).board.strokes, associations);
-  for (const candidate of candidates) {
-    if (candidate.candidateIndex <= afterCandidateIndex) continue;
+  const afterRank = candidates.findIndex(({ candidateIndex }) => candidateIndex === afterCandidateIndex);
+  for (const candidate of candidates.slice(afterRank + 1)) {
     const explanation = candidate.crowded ? 'The board is crowded; this is the clearest nearby space.' : 'Placed in the clearest nearby space.';
     const proposal = finishProposal(kind, target.object, contextPosition, revision, resolvedGenerationId, candidate.candidateIndex, candidate.raw, explanation);
     if (!rejected.has(proposal.fingerprint)) return { kind, proposal, message: '' };

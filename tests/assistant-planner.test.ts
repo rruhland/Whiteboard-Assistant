@@ -64,6 +64,46 @@ describe('assistant proposal planner', () => {
     expect(next.proposal?.fingerprint).not.toBe(first.fingerprint);
   });
 
+  test('arrow regeneration considers every scored candidate before exhaustion', () => {
+    const fixture = rightBlockedFixture();
+    const rejected = new Set<string>();
+    const candidateIndexes: number[] = [];
+    let slot = generateProposalSet(fixture.document, fixture.index, fixture.associations, rejected).arrow;
+    while (slot.proposal) {
+      candidateIndexes.push(slot.proposal.candidateIndex);
+      rejected.add(slot.proposal.fingerprint);
+      slot = regenerateProposal('recent-work-arrow', fixture.document, fixture.index, fixture.associations, rejected, slot.proposal.candidateIndex);
+    }
+    expect(new Set(candidateIndexes).size).toBe(12);
+    expect(slot.message).toMatch(/unused arrow/i);
+    expect(generateProposalSet(fixture.document, fixture.index, fixture.associations, rejected).arrow.proposal).toBeNull();
+  });
+
+  test.each([
+    { minX: 10, minY: 20, maxX: 10, maxY: 20 },
+    { minX: 9, minY: 19, maxX: 11, maxY: 21 },
+  ])('keeps every arrow tip on point or narrow target bounds %o', (bounds) => {
+    const fixture = plannerFixture({ bounds });
+    const targetBounds = { minX: bounds.minX - 1, minY: bounds.minY - 1, maxX: bounds.maxX + 1, maxY: bounds.maxY + 1 };
+    const rejected = new Set<string>();
+    let slot = generateProposalSet(fixture.document, fixture.index, fixture.associations, rejected).arrow;
+    while (slot.proposal) {
+      const direction = Math.floor(slot.proposal.candidateIndex / 3);
+      const tip = slot.proposal.strokes[0].points[1];
+      if (direction < 2) {
+        expect(tip.x).toBe(direction === 0 ? targetBounds.maxX : targetBounds.minX);
+        expect(tip.y).toBeGreaterThanOrEqual(targetBounds.minY);
+        expect(tip.y).toBeLessThanOrEqual(targetBounds.maxY);
+      } else {
+        expect(tip.y).toBe(direction === 2 ? targetBounds.maxY : targetBounds.minY);
+        expect(tip.x).toBeGreaterThanOrEqual(targetBounds.minX);
+        expect(tip.x).toBeLessThanOrEqual(targetBounds.maxX);
+      }
+      rejected.add(slot.proposal.fingerprint);
+      slot = regenerateProposal('recent-work-arrow', fixture.document, fixture.index, fixture.associations, rejected, slot.proposal.candidateIndex);
+    }
+  });
+
   test('returns a finite stable candidate on a fully occupied board', () => {
     const fixture = crowdedFixture();
     const first = generateProposalSet(fixture.document, fixture.index, fixture.associations, new Set()).arrow.proposal!;

@@ -2,7 +2,7 @@
 
 ## Automated gate
 
-- `npm test`: 17 files, 121 tests passed.
+- `npm test`: 17 files, 126 tests passed.
 - `npm run build`: TypeScript checking and Vite production bundling passed.
 - `npm audit --audit-level=moderate`: 0 vulnerabilities.
 - `git diff --check`: no whitespace errors.
@@ -19,6 +19,7 @@ The acceptance pass ran against `npm run preview` in an isolated Playwright Chro
 - Editing: an eraser gesture removed annotation members; undo produced a partially visible annotation, whole-annotation deletion removed the remaining member, and undo/redo restored and removed that batch.
 - History: the assistant batch and annotation creation appeared as separate ordered events; selecting annotation creation reconstructed all three members and disabled drawing, approval, grouping corrections, deletion, open, and save.
 - Stale protection: zoom preserved proposed cards; a new ink event marked both cards stale and disabled approval.
+- Regenerated approval: after a new ink event made both cards stale, regenerating both and approving the circle left the circle approved and the arrow independently proposed. No page or console errors occurred.
 - Migration/reload: a fixed version-2 file without `objectType` loaded as one content object, autosaved as version 3, and replayed after reload with the same stroke and event count.
 - Persistence failure: forcing `Storage.setItem` to throw left an approved circle in memory, reported **Not saved: forced failure**, and kept **Save file** enabled.
 - Responsive/accessibility: at 500 px, Assistant, Objects, and History excluded one another; all assistant actions remained reachable in a scrolling bottom sheet. Escape returned focus to `#assistant-toggle`. No page or console errors were recorded.
@@ -29,6 +30,7 @@ Screenshots:
 - `output/playwright/proposals.png`
 - `output/playwright/approved-annotation.png`
 - `output/playwright/mobile-assistant.png`
+- `output/playwright/final-regenerated-approval.png`
 
 ## Determinism and migration checks
 
@@ -40,4 +42,10 @@ The production acceptance pass used Chromium on Windows plus Chromium's DPR-2 pr
 
 ## Whole-branch review
 
-Pending final fresh-context review against the milestone specification and implementation plan.
+A fresh-context review found no Critical issues and three Important issues. The correction pass now:
+
+- coordinates approval with the approved proposal's actual generation and preserves terminal decisions;
+- exhausts arrow candidates in collision-score order rather than raw candidate-index order; and
+- keeps every offset arrow tip on the target boundary while aiming the shaft from the displaced start.
+
+Each correction was protected by a failing regression before implementation. The final focused browser pass confirmed the stale → regenerate both → approve one flow. The review also identified a Minor accessibility issue: regenerating rebuilds the card DOM, loses keyboard focus, and does not announce the new status. Browser verification reproduced the focus loss; it is deferred from this proof-of-concept milestone.
