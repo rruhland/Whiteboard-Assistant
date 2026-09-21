@@ -28,7 +28,8 @@ npm run preview   # serve the production build locally
 | Temporary stylus select | Hold the upper/right-click side button while touching the canvas |
 | Draw with a mouse | Pen button or `P`, then pointer-drag; a click creates a dot |
 | Select strokes | Select button or `V`, then drag a box fully around strokes; hold `Shift` to add another box |
-| Transform a selection | Drag selected ink to move it, edge handles to scale one axis, corner handles to scale proportionally, or the top handle to rotate |
+| Transform a selection | Drag anywhere inside its box with the pen tip, select button, mouse, or one finger; edge handles scale one axis, corner handles scale proportionally, and the top handle rotates |
+| Clear a selection | Start a pen action outside its box, or tap outside with one finger; finger pan and pinch keep the selection active |
 | Delete the selection | `Delete` or `Backspace`; the group is one undoable edit |
 | Erase whole strokes | Eraser button or `E`, then click or drag across strokes |
 | Pan | One-finger drag; Hand button or `H`; middle-button drag; or hold `Space` while dragging |
@@ -81,6 +82,6 @@ The normal eraser removes individual annotation strokes, including either arrowh
 
 ## Current scope
 
-Erasing removes an entire stroke. Fingers are navigation-only, and touch contacts are ignored while the pen tip is actively editing to prevent a palm from moving the board mid-stroke; simultaneous pen editing and touch navigation are not supported. This milestone does not include partial-stroke erasing, lasso selection, resize flipping, transform snapping, image/PDF import, OCR, learned vision or language models, generated text, rewriting user strokes, IndexedDB, accounts, collaboration, or a server.
+Erasing removes an entire stroke. Fingers navigate outside a selection and manipulate it from inside its box; touch contacts are ignored while the pen tip is actively editing to prevent a palm from moving the board mid-stroke. Simultaneous pen editing and touch navigation are not supported. This milestone does not include partial-stroke erasing, lasso selection, resize flipping, transform snapping, image/PDF import, OCR, learned vision or language models, generated text, rewriting user strokes, IndexedDB, accounts, collaboration, or a server.
 
 Follow-on work can replace the deterministic planner with visual and language models while keeping the same preview, approval, provenance, graph, and temporal contracts. Later rewrite operations may join existing content objects; assistant notes remain separately identifiable annotation objects.

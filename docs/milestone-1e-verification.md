@@ -2,7 +2,7 @@
 
 ## Automated gate
 
-- `npm test`: 20 files, 159 tests passed.
+- `npm test`: 20 files, 164 tests passed.
 - `npm run build`: TypeScript checking and Vite production bundling passed.
 - `git diff --check`: no whitespace errors.
 
@@ -22,9 +22,11 @@ At a 500 by 800 pixel viewport, the document and canvas-library dialog had no ho
 
 A correction pass also confirmed that Delete cannot reach selected board ink while the canvas-library modal is open, Tab and Shift+Tab remain within the dialog, and its heading receives initial focus.
 
+The selection follow-up passed synthetic pen and touch pointer flows in Chromium: pen-tip and finger drags begun in empty space inside the selection box moved the group; a finger drag on an edge handle resized it; an outside finger drag and two-finger gesture preserved selection; an outside finger tap cleared it; and a pen-tip stroke outside cleared selection while drawing. The browser recorded no console errors or warnings.
+
 ## Automated behavior coverage
 
-Unit tests cover pen-button routing and release back to drawing, touch-only navigation arbitration, one-finger pan, two-finger pinch and pinch rebasing, exact marquee containment, additive Shift selection, grouped move/resize/rotation geometry, unchanged stroke widths, atomic group history, catalog migration, independent canvas documents, staged catalog updates, deletion replacement, and malformed-storage recovery. Portable open/save is covered at the document and storage boundary; the browser download and file-picker UI were not automated.
+Unit tests cover pen-button routing and release back to drawing, touch navigation arbitration, tap-versus-drag detection, multi-touch selection preservation, one-finger pan, two-finger pinch and pinch rebasing, exact marquee containment, additive Shift selection, selection-box and handle hit routing, grouped move/resize/rotation geometry, unchanged stroke widths, atomic group history, catalog migration, independent canvas documents, staged catalog updates, deletion replacement, and malformed-storage recovery. Portable open/save is covered at the document and storage boundary; the browser download and file-picker UI were not automated.
 
 ## Physical hardware checklist
 

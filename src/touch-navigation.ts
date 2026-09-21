@@ -4,7 +4,10 @@ export type ScreenPoint = { x: number; y: number };
 export type TouchNavigation = {
   contacts: ReadonlyMap<number, ScreenPoint>;
   originContacts: ReadonlyMap<number, ScreenPoint>;
+  startContacts: ReadonlyMap<number, ScreenPoint>;
   originViewport: Viewport;
+  maximumContacts: number;
+  maximumTravel: number;
 };
 
 function cloneContacts(contacts: ReadonlyMap<number, ScreenPoint>): Map<number, ScreenPoint> {
@@ -60,19 +63,29 @@ export function beginTouch(
 ): TouchNavigation {
   if (!state) {
     const contacts = new Map([[pointerId, { ...screen }]]);
-    return { contacts, originContacts: cloneContacts(contacts), originViewport: { ...viewport } };
+    return {
+      contacts,
+      originContacts: cloneContacts(contacts),
+      startContacts: cloneContacts(contacts),
+      originViewport: { ...viewport },
+      maximumContacts: 1,
+      maximumTravel: 0,
+    };
   }
   const originViewport = touchViewport(state);
   const contacts = cloneContacts(state.contacts);
   contacts.set(pointerId, { ...screen });
-  return { contacts, originContacts: cloneContacts(contacts), originViewport };
+  const startContacts = cloneContacts(state.startContacts);
+  startContacts.set(pointerId, { ...screen });
+  return { ...state, contacts, originContacts: cloneContacts(contacts), startContacts, originViewport, maximumContacts: Math.max(state.maximumContacts, contacts.size) };
 }
 
 export function updateTouch(state: TouchNavigation, pointerId: number, screen: ScreenPoint): TouchNavigation {
   if (!state.contacts.has(pointerId)) return state;
   const contacts = cloneContacts(state.contacts);
   contacts.set(pointerId, { ...screen });
-  return { ...state, contacts };
+  const start = state.startContacts.get(pointerId) ?? screen;
+  return { ...state, contacts, maximumTravel: Math.max(state.maximumTravel, distance(start, screen)) };
 }
 
 export function endTouch(state: TouchNavigation, pointerId: number): TouchNavigation | null {
@@ -81,7 +94,15 @@ export function endTouch(state: TouchNavigation, pointerId: number): TouchNaviga
   const contacts = cloneContacts(state.contacts);
   contacts.delete(pointerId);
   if (contacts.size === 0) return null;
-  return { contacts, originContacts: cloneContacts(contacts), originViewport };
+  return { ...state, contacts, originContacts: cloneContacts(contacts), originViewport };
+}
+
+export function isTouchTap(state: TouchNavigation, threshold = 6): boolean {
+  return state.maximumContacts === 1 && state.maximumTravel <= threshold;
+}
+
+export function touchStartIntent(navigationActive: boolean, selectionOperationAvailable: boolean): 'navigation' | 'transform' {
+  return !navigationActive && selectionOperationAvailable ? 'transform' : 'navigation';
 }
 
 export function abandonTouch(state: TouchNavigation | null): { pointerIds: number[]; navigation: null } {

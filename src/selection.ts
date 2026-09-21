@@ -85,6 +85,19 @@ export function hitSelectionHandle(point: Point, bounds: Bounds, zoom: number): 
   return hits[0]?.handle ?? null;
 }
 
+export function selectionOperationAt(point: Point, bounds: Bounds, zoom: number): SelectionOperation | null {
+  const handle = hitSelectionHandle(point, bounds, zoom);
+  if (handle === 'rotate') {
+    const pivot = center(bounds);
+    return { type: 'rotate', originAngle: Math.atan2(point.y - pivot.y, point.x - pivot.x) };
+  }
+  if (handle) return { type: 'resize', handle, origin: point };
+  if (point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY) {
+    return { type: 'move', origin: point };
+  }
+  return null;
+}
+
 function resizeAnchor(bounds: Bounds, handle: ResizeHandle): { x: number; y: number } {
   const midpoint = center(bounds);
   return {

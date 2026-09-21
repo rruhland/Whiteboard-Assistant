@@ -7,6 +7,7 @@ import {
   renderedStrokeBounds,
   selectionBounds,
   selectionHandlePoints,
+  selectionOperationAt,
   transformSelection,
 } from '../src/selection';
 
@@ -48,6 +49,18 @@ describe('selection geometry', () => {
     const thin = { minX: 0, minY: 0, maxX: 4, maxY: 100 };
     expect(hitSelectionHandle(point(0, 50), thin, 1)).toBe('w');
     expect(hitSelectionHandle(point(4, 50), thin, 1)).toBe('e');
+  });
+
+  test('moves a selection from any point inside its bounds', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 50 };
+    expect(selectionOperationAt(point(50, 25), bounds, 1)).toEqual({ type: 'move', origin: point(50, 25) });
+    expect(selectionOperationAt(point(150, 25), bounds, 1)).toBeNull();
+  });
+
+  test('gives resize and rotation handles priority over moving the selection', () => {
+    const bounds = { minX: 0, minY: 0, maxX: 100, maxY: 50 };
+    expect(selectionOperationAt(point(100, 25), bounds, 1)).toEqual({ type: 'resize', handle: 'e', origin: point(100, 25) });
+    expect(selectionOperationAt(point(50, -28), bounds, 1)).toEqual({ type: 'rotate', originAngle: -Math.PI / 2 });
   });
 
   test('edge resize changes one axis and preserves stroke width and metadata', () => {

@@ -16,11 +16,11 @@ import {
 } from './gesture';
 import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition, type Tool } from './input';
 import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
-import { containedStrokeIds, hitSelectionHandle, mergeSelection, selectionBounds, type SelectionOperation } from './selection';
+import { containedStrokeIds, mergeSelection, selectionBounds, selectionOperationAt } from './selection';
 import { createCanvas, deleteCanvas, initializeCanvasLibrary, openCanvas, readPortableBoard, renameCanvas, saveActiveCanvas, type CanvasCatalogV1, type StorageLike } from './storage';
 import { buildActivitySamples } from './temporal';
 import { TimelinePanel } from './timeline-panel';
-import { abandonTouch, beginTouch, endTouch, touchViewport, updateTouch, type TouchNavigation } from './touch-navigation';
+import { abandonTouch, beginTouch, endTouch, isTouchTap, touchStartIntent, touchViewport, updateTouch, type TouchNavigation } from './touch-navigation';
 import { commitStroke, createHistorySession, loadWorkspace, rebuildHistorySession, returnToNow, selectHistoryPosition, workspaceDocument, type HistorySession, type WorkspaceState } from './workspace';
 
 function element<T extends HTMLElement>(selector: string): T {
@@ -66,6 +66,7 @@ let selectedIds = new Set<string>();
 let activeTool: Tool = 'pen';
 let activeGesture: Gesture | null = null;
 let touchNavigation: TouchNavigation | null = null;
+let touchMayDeselectSelection = false;
 let penEditPointerId: number | null = null;
 const suppressedTouchIds = new Set<number>();
 let spacePressed = false;
@@ -147,6 +148,7 @@ function replaceWorkspace(document: BoardDocumentV3): void {
     }
   }
   touchNavigation = null;
+  touchMayDeselectSelection = false;
   suppressedTouchIds.clear();
   penEditPointerId = null;
   workspace = loadWorkspace({ sourceVersion: 3, document });
@@ -295,6 +297,7 @@ function showNow(): void {
   cancelActiveGesture();
   const abandoned = abandonTouch(touchNavigation);
   touchNavigation = abandoned.navigation;
+  touchMayDeselectSelection = false;
   for (const id of abandoned.pointerIds) {
     suppressedTouchIds.add(id);
     if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
@@ -584,12 +587,26 @@ function selectedStrokes() {
   return displayBoard().strokes.filter(({ id }) => selectedIds.has(id));
 }
 
+function selectionTransform(pointerId: number, world: Point): Gesture | null {
+  const originals = selectedStrokes();
+  const bounds = selectionBounds(originals);
+  if (!bounds) return null;
+  const operation = selectionOperationAt(world, bounds, displayViewport().zoom);
+  return operation ? { type: 'transform', pointerId, bounds, originals, operation, current: world } : null;
+}
+
 function startPointer(event: PointerEvent): void {
   if (event.pointerType === 'touch') {
     if (penEditPointerId !== null || activeGesture || suppressedTouchIds.size > 0) {
       suppressedTouchIds.add(event.pointerId);
     } else {
-      touchNavigation = beginTouch(touchNavigation, event.pointerId, screenPoint(event), displayViewport());
+      const transform = isHistorical() ? null : selectionTransform(event.pointerId, worldPoint(event));
+      if (touchStartIntent(touchNavigation !== null, transform !== null) === 'transform' && transform) {
+        activeGesture = beginGesture(activeGesture, transform);
+      } else {
+        if (!touchNavigation) touchMayDeselectSelection = selectedIds.size > 0;
+        touchNavigation = beginTouch(touchNavigation, event.pointerId, screenPoint(event), displayViewport());
+      }
     }
     canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -604,6 +621,7 @@ function startPointer(event: PointerEvent): void {
     const viewport = touchViewport(touchNavigation);
     for (const id of touchNavigation.contacts.keys()) suppressedTouchIds.add(id);
     touchNavigation = null;
+    touchMayDeselectSelection = false;
     applyNavigationViewport(viewport);
     if (!isHistorical()) persistNavigationSoon();
   }
@@ -611,28 +629,22 @@ function startPointer(event: PointerEvent): void {
   const screen = screenPoint(event);
   const world = worldPoint(event);
   let next: Gesture | null = null;
+  const selectedTransform = (effectiveTool === 'select' || (event.pointerType === 'pen' && effectiveTool === 'pen'))
+    ? selectionTransform(event.pointerId, world)
+    : null;
 
-  if (effectiveTool === 'pen') {
+  if (selectedTransform) {
+    next = selectedTransform;
+  } else if (effectiveTool === 'pen') {
+    if (event.pointerType === 'pen') selectedIds.clear();
     next = { type: 'ink', pointerId: event.pointerId, points: [world] };
   } else if (effectiveTool === 'hand') {
     next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...displayViewport() } };
   } else if (effectiveTool === 'select') {
-    const originals = selectedStrokes();
-    const bounds = selectionBounds(originals);
-    const handle = bounds ? hitSelectionHandle(world, bounds, displayViewport().zoom) : null;
-    let operation: SelectionOperation | null = null;
-    if (bounds && handle === 'rotate') {
-      const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
-      operation = { type: 'rotate', originAngle: Math.atan2(world.y - center.y, world.x - center.x) };
-    } else if (bounds && handle && handle !== 'rotate') {
-      operation = { type: 'resize', handle, origin: world };
-    } else if (bounds && hitTestStroke(originals, world, 7 / displayViewport().zoom)) {
-      operation = { type: 'move', origin: world };
-    }
-    next = operation && bounds
-      ? { type: 'transform', pointerId: event.pointerId, bounds, originals, operation, current: world }
-      : { type: 'marquee', pointerId: event.pointerId, origin: world, current: world, additive: event.shiftKey };
+    if (!event.shiftKey) selectedIds.clear();
+    next = { type: 'marquee', pointerId: event.pointerId, origin: world, current: world, additive: event.shiftKey };
   } else if (effectiveTool === 'eraser') {
+    if (event.pointerType === 'pen') selectedIds.clear();
     const strokeId = hitAt(world);
     next = { type: 'erase', pointerId: event.pointerId, strokeIds: strokeId ? [strokeId] : [], current: world };
   }
@@ -650,7 +662,11 @@ function startPointer(event: PointerEvent): void {
 
 function movePointer(event: PointerEvent): void {
   if (event.pointerType === 'touch') {
-    if (touchNavigation?.contacts.has(event.pointerId)) {
+    if (activeGesture?.type === 'transform' && activeGesture.pointerId === event.pointerId) {
+      activeGesture = updateGesture(activeGesture, event.pointerId, { world: worldPoint(event) });
+      event.preventDefault();
+      scheduleRender();
+    } else if (touchNavigation?.contacts.has(event.pointerId)) {
       touchNavigation = updateTouch(touchNavigation, event.pointerId, screenPoint(event));
       event.preventDefault();
       scheduleRender();
@@ -741,13 +757,20 @@ function endPointer(event: PointerEvent): void {
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
       return;
     }
+    if (activeGesture?.type === 'transform' && activeGesture.pointerId === event.pointerId) {
+      finishActivePointer(event, true);
+      return;
+    }
     if (!touchNavigation?.contacts.has(event.pointerId)) return;
     touchNavigation = updateTouch(touchNavigation, event.pointerId, screenPoint(event));
     const viewport = touchViewport(touchNavigation);
+    const deselect = touchMayDeselectSelection && isTouchTap(touchNavigation);
     touchNavigation = endTouch(touchNavigation, event.pointerId);
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (!touchNavigation) {
       applyNavigationViewport(viewport);
+      if (deselect) selectedIds.clear();
+      touchMayDeselectSelection = false;
       updateControls();
       if (!isHistorical()) persistNavigationSoon();
     }
@@ -791,11 +814,18 @@ canvas.addEventListener('pointermove', movePointer);
 canvas.addEventListener('pointerup', endPointer);
 const cancelPointerGesture = (event: PointerEvent): void => {
   if (event.pointerType === 'touch') {
+    if (ownsGesturePointer(activeGesture, event.pointerId)) {
+      cancelActiveGesture();
+      return;
+    }
     suppressedTouchIds.delete(event.pointerId);
     if (touchNavigation?.contacts.has(event.pointerId)) {
       const viewport = touchViewport(touchNavigation);
       touchNavigation = endTouch(touchNavigation, event.pointerId);
-      if (!touchNavigation) applyNavigationViewport(viewport);
+      if (!touchNavigation) {
+        applyNavigationViewport(viewport);
+        touchMayDeselectSelection = false;
+      }
       scheduleRender();
     }
     return;
@@ -837,6 +867,7 @@ canvasesToggle.addEventListener('click', () => {
   if (touchNavigation) {
     applyNavigationViewport(touchViewport(touchNavigation));
     touchNavigation = null;
+    touchMayDeselectSelection = false;
   }
   objectPanelOpen = false;
   timelinePanelOpen = false;
@@ -983,6 +1014,7 @@ window.addEventListener('blur', () => {
   if (touchNavigation) {
     applyNavigationViewport(touchViewport(touchNavigation));
     touchNavigation = null;
+    touchMayDeselectSelection = false;
   }
   suppressedTouchIds.clear();
   cancelActiveGesture();

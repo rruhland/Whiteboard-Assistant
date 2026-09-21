@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { abandonTouch, beginTouch, endTouch, touchViewport, updateTouch } from '../src/touch-navigation';
+import { abandonTouch, beginTouch, endTouch, isTouchTap, touchStartIntent, touchViewport, updateTouch } from '../src/touch-navigation';
 
 describe('touch navigation', () => {
   test('pans with one finger from the captured origin viewport', () => {
@@ -39,5 +39,27 @@ describe('touch navigation', () => {
     let state = beginTouch(null, 4, { x: 0, y: 0 }, { x: 10, y: 20, zoom: 1 });
     state = updateTouch(state, 4, { x: 40, y: 60 });
     expect(abandonTouch(state)).toEqual({ pointerIds: [4], navigation: null });
+  });
+
+  test('distinguishes a slightly jittery tap from a navigation drag', () => {
+    let tap = beginTouch(null, 1, { x: 10, y: 10 }, { x: 0, y: 0, zoom: 1 });
+    tap = updateTouch(tap, 1, { x: 14, y: 13 });
+    expect(isTouchTap(tap)).toBe(true);
+
+    let drag = beginTouch(null, 2, { x: 10, y: 10 }, { x: 0, y: 0, zoom: 1 });
+    drag = updateTouch(drag, 2, { x: 18, y: 10 });
+    expect(isTouchTap(drag)).toBe(false);
+  });
+
+  test('never treats a multi-touch gesture as a deselecting tap', () => {
+    let state = beginTouch(null, 1, { x: 10, y: 10 }, { x: 0, y: 0, zoom: 1 });
+    state = beginTouch(state, 2, { x: 20, y: 10 }, touchViewport(state));
+    expect(isTouchTap(state)).toBe(false);
+  });
+
+  test('keeps additional contacts in an existing navigation gesture', () => {
+    expect(touchStartIntent(false, true)).toBe('transform');
+    expect(touchStartIntent(false, false)).toBe('navigation');
+    expect(touchStartIntent(true, true)).toBe('navigation');
   });
 });
