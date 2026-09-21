@@ -1,5 +1,5 @@
-import { AssociationModel, type AssociationEvent, type AssociationEventKind } from './association';
-import { BoardModel, type BoardEvent, type BoardEventKind } from './board';
+import { AssociationModel, type AssociationEvent, type AssociationEventKind, type Bounds, type WorkObject } from './association';
+import { BoardModel, type BoardEvent, type BoardEventKind, type Stroke } from './board';
 import type { BoardDocumentV2 } from './document';
 
 export type TimelineSource = 'ink' | 'association';
@@ -34,6 +34,41 @@ export type HistoricalProjection = {
   segment: ActivitySegment | null;
   board: BoardModel;
   associations: AssociationModel;
+};
+export type TemporalDetail = 'summary' | 'geometry';
+export type CurrentContext = {
+  position: number;
+  segmentId: string | null;
+  visibleStrokeCount: number;
+  activeObjectCount: number;
+  visibleStrokeIds: string[];
+  activeObjectIds: string[];
+  recentEntries: TimelineEntry[];
+};
+export type TemporalChangeResult = {
+  fromPosition: number;
+  toPosition: number;
+  entries: TimelineEntry[];
+  affectedStrokeIds: string[];
+  affectedObjectIds: string[];
+  strokes?: Stroke[];
+};
+export type TemporalObjectResult = {
+  objectId: string;
+  throughPosition: number;
+  entries: TimelineEntry[];
+  lineageObjectIds: string[];
+  memberStrokeIds: string[];
+  objects?: WorkObject[];
+  strokes?: Stroke[];
+};
+export type TemporalRegionResult = {
+  bounds: Bounds;
+  throughPosition: number;
+  entries: TimelineEntry[];
+  strokeIds: string[];
+  erasedStrokeIds: string[];
+  strokes?: Stroke[];
 };
 
 function strokeIds(event: BoardEvent | AssociationEvent): string[] {
@@ -121,5 +156,181 @@ export function projectHistory(document: BoardDocumentV2, index: TemporalIndex, 
     segment: segment ? structuredClone(segment) : null,
     board: new BoardModel({ events: inkEvents }),
     associations: new AssociationModel(associationEvents, knownStrokeIds),
+  };
+}
+
+function validatePosition(index: TemporalIndex, position: number, label = 'position'): void {
+  if (!Number.isInteger(position) || position < 0 || position > index.entries.length) {
+    throw new Error(`${label} must be an integer from 0 to ${index.entries.length}`);
+  }
+}
+
+function inkEvent(document: BoardDocumentV2, entry: TimelineEntry): BoardEvent | undefined {
+  return entry.source === 'ink' ? document.events[entry.inkEventCount - 1] : undefined;
+}
+
+function associationEvent(document: BoardDocumentV2, entry: TimelineEntry): AssociationEvent | undefined {
+  return entry.source === 'association' ? document.associationEvents[entry.associationEventCount - 1] : undefined;
+}
+
+function uniqueSorted(values: Iterable<string>): string[] {
+  return [...new Set(values)].sort();
+}
+
+function cloneEntries(entries: TimelineEntry[]): TimelineEntry[] {
+  return structuredClone(entries);
+}
+
+export function getCurrentContext(document: BoardDocumentV2, index: TemporalIndex, sincePosition?: number): CurrentContext {
+  const position = index.entries.length;
+  if (sincePosition !== undefined) validatePosition(index, sincePosition, 'sincePosition');
+  const projection = projectHistory(document, index, position);
+  const segment = index.segments.at(-1) ?? null;
+  const start = Math.max(segment ? segment.startPosition - 1 : position, sincePosition ?? 0);
+  const visibleStrokeIds = projection.board.strokes.map(({ id }) => id);
+  const activeObjectIds = projection.associations.objects.filter(({ status }) => status === 'active').map(({ id }) => id);
+  return {
+    position,
+    segmentId: segment?.id ?? null,
+    visibleStrokeCount: visibleStrokeIds.length,
+    activeObjectCount: activeObjectIds.length,
+    visibleStrokeIds,
+    activeObjectIds,
+    recentEntries: cloneEntries(index.entries.slice(start)),
+  };
+}
+
+export function queryChanges(
+  document: BoardDocumentV2,
+  index: TemporalIndex,
+  fromPosition: number,
+  toPosition: number,
+  options: { detail?: TemporalDetail } = {},
+): TemporalChangeResult {
+  validatePosition(index, fromPosition, 'fromPosition');
+  validatePosition(index, toPosition, 'toPosition');
+  if (fromPosition > toPosition) throw new Error('fromPosition must not exceed toPosition');
+  const entries = index.entries.slice(fromPosition, toPosition);
+  const strokeIds: string[] = [];
+  const objectIds: string[] = [];
+  const snapshots = new Map<string, Stroke>();
+  for (const entry of entries) {
+    const ink = inkEvent(document, entry);
+    if (ink) for (const change of ink.changes) {
+      const value = change.after ?? change.before;
+      if (!value) continue;
+      strokeIds.push(value.id);
+      snapshots.set(value.id, structuredClone(value));
+    }
+    const association = associationEvent(document, entry);
+    if (association) for (const change of association.changes) {
+      const value = change.after ?? change.before;
+      if (value) objectIds.push(value.id);
+    }
+  }
+  return {
+    fromPosition,
+    toPosition,
+    entries: cloneEntries(entries),
+    affectedStrokeIds: uniqueSorted(strokeIds),
+    affectedObjectIds: uniqueSorted(objectIds),
+    ...(options.detail === 'geometry' ? { strokes: [...snapshots.values()].map((stroke) => structuredClone(stroke)) } : {}),
+  };
+}
+
+export function queryObjectHistory(
+  document: BoardDocumentV2,
+  index: TemporalIndex,
+  objectId: string,
+  options: { throughPosition?: number; detail?: TemporalDetail } = {},
+): TemporalObjectResult {
+  const throughPosition = options.throughPosition ?? index.entries.length;
+  validatePosition(index, throughPosition, 'throughPosition');
+  const prefix = index.entries.slice(0, throughPosition);
+  const objects = new Map<string, WorkObject>();
+  for (const entry of prefix) {
+    const event = associationEvent(document, entry);
+    event?.changes.forEach(({ before, after }) => {
+      if (before) objects.set(before.id, structuredClone(before));
+      if (after) objects.set(after.id, structuredClone(after));
+    });
+  }
+  if (!objects.has(objectId)) return { objectId, throughPosition, entries: [], lineageObjectIds: [], memberStrokeIds: [] };
+  const lineage = new Set([objectId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const object of objects.values()) {
+      if (lineage.has(object.id) || object.parentIds.some((id) => lineage.has(id))) {
+        if (!lineage.has(object.id)) { lineage.add(object.id); changed = true; }
+        for (const parentId of object.parentIds) if (!lineage.has(parentId)) { lineage.add(parentId); changed = true; }
+      }
+    }
+  }
+  const entries = prefix.filter((entry) => associationEvent(document, entry)?.changes.some(({ before, after }) => lineage.has((after ?? before)?.id ?? '')));
+  const selectedObjects = [...objects.values()].filter(({ id }) => lineage.has(id));
+  const memberStrokeIds = uniqueSorted(selectedObjects.flatMap(({ strokeIds }) => strokeIds));
+  const strokeSnapshots = new Map<string, Stroke>();
+  for (const event of document.events.slice(0, prefix.at(-1)?.inkEventCount ?? 0)) for (const change of event.changes) {
+    const value = change.after ?? change.before;
+    if (value && memberStrokeIds.includes(value.id)) strokeSnapshots.set(value.id, structuredClone(value));
+  }
+  return {
+    objectId,
+    throughPosition,
+    entries: cloneEntries(entries),
+    lineageObjectIds: uniqueSorted(lineage),
+    memberStrokeIds,
+    ...(options.detail === 'geometry' ? { objects: structuredClone(selectedObjects), strokes: [...strokeSnapshots.values()] } : {}),
+  };
+}
+
+function assertBounds(bounds: Bounds): void {
+  if (![bounds.minX, bounds.minY, bounds.maxX, bounds.maxY].every(Number.isFinite) || bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) {
+    throw new Error('bounds must contain finite ordered coordinates');
+  }
+}
+
+function intersects(stroke: Stroke, bounds: Bounds): boolean {
+  const radius = stroke.width / 2;
+  const xs = stroke.points.map(({ x }) => x);
+  const ys = stroke.points.map(({ y }) => y);
+  const strokeBounds = { minX: Math.min(...xs) - radius, minY: Math.min(...ys) - radius, maxX: Math.max(...xs) + radius, maxY: Math.max(...ys) + radius };
+  return strokeBounds.minX <= bounds.maxX && strokeBounds.maxX >= bounds.minX && strokeBounds.minY <= bounds.maxY && strokeBounds.maxY >= bounds.minY;
+}
+
+export function queryRegionHistory(
+  document: BoardDocumentV2,
+  index: TemporalIndex,
+  bounds: Bounds,
+  options: { throughPosition?: number; detail?: TemporalDetail; includeErased?: boolean } = {},
+): TemporalRegionResult {
+  assertBounds(bounds);
+  const throughPosition = options.throughPosition ?? index.entries.length;
+  validatePosition(index, throughPosition, 'throughPosition');
+  const prefix = index.entries.slice(0, throughPosition);
+  const projection = projectHistory(document, index, throughPosition);
+  const visible = new Set(projection.board.strokes.map(({ id }) => id));
+  const snapshots = new Map<string, Stroke>();
+  const matchingEntries: TimelineEntry[] = [];
+  for (const entry of prefix) {
+    const event = inkEvent(document, entry);
+    let matches = false;
+    for (const change of event?.changes ?? []) {
+      const value = change.after ?? change.before;
+      if (value && intersects(value, bounds)) { snapshots.set(value.id, structuredClone(value)); matches = true; }
+    }
+    if (matches) matchingEntries.push(entry);
+  }
+  const allMatches = [...snapshots.keys()];
+  const erasedStrokeIds = uniqueSorted(allMatches.filter((id) => !visible.has(id)));
+  const strokeIds = uniqueSorted(allMatches.filter((id) => visible.has(id) || options.includeErased));
+  return {
+    bounds: structuredClone(bounds),
+    throughPosition,
+    entries: cloneEntries(matchingEntries),
+    strokeIds,
+    erasedStrokeIds,
+    ...(options.detail === 'geometry' ? { strokes: strokeIds.map((id) => structuredClone(snapshots.get(id) as Stroke)) } : {}),
   };
 }

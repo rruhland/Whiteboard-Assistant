@@ -2,6 +2,7 @@ import type { AssociationEvent, AssociationModel, Bounds, WorkObject } from '../
 import type { BoardEvent, Stroke } from '../src/board';
 import type { BoardDocumentV2 } from '../src/document';
 import type { TemporalIndex } from '../src/temporal';
+import { buildTemporalIndex } from '../src/temporal';
 
 const viewport = { x: 0, y: 0, zoom: 1 };
 const point = (x: number, y = 0) => ({ x, y, pressure: 0.5, time: 0 });
@@ -64,3 +65,26 @@ export function activeLabels(model: AssociationModel): string[] {
 }
 
 export type ObjectRegionFixture = { document: BoardDocumentV2; index: TemporalIndex; mergedParentId: string; mergeChildId: string; splitChildId: string; erasedId: string; region: Bounds };
+
+export function segmentedFixture(): { document: BoardDocumentV2; index: TemporalIndex; erasedId: string } {
+  const erasedId = 'erased-stroke';
+  const erased = stroke(erasedId, 0, 0);
+  const recent = stroke('recent-stroke', 40_001, 100);
+  const document: BoardDocumentV2 = { version: 2, viewport, associationEvents: [], events: [
+    { id: 'add-old', time: 0, actor: 'user', kind: 'add', changes: [{ before: null, after: erased }] },
+    { id: 'erase-old', time: 1, actor: 'user', kind: 'erase', changes: [{ before: erased, after: null }] },
+    { id: 'add-recent', time: 40_001, actor: 'user', kind: 'add', changes: [{ before: null, after: recent }] },
+  ] };
+  return { document, index: buildTemporalIndex(document), erasedId };
+}
+
+export function objectRegionFixture(): ObjectRegionFixture {
+  const base = documentWithMergeAndSplit();
+  const erasedId = 'erased-region';
+  const erased = stroke(erasedId, 5, 8, 8);
+  const document: BoardDocumentV2 = { ...base, events: [...base.events,
+    { id: 'add-erased', time: 5, actor: 'user', kind: 'add', changes: [{ before: null, after: erased }] },
+    { id: 'erase-region', time: 6, actor: 'user', kind: 'erase', changes: [{ before: erased, after: null }] },
+  ] };
+  return { document, index: buildTemporalIndex(document), mergedParentId: 'A', mergeChildId: 'C', splitChildId: 'D', erasedId, region: { minX: -5, minY: -5, maxX: 45, maxY: 15 } };
+}
