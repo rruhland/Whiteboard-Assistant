@@ -8,7 +8,7 @@ const nodes: GraphNode[] = [
 ];
 
 function state(overrides: Partial<ObjectPanelState> = {}): ObjectPanelState {
-  return { nodes, edges: [], selectedStrokeId: 'one', selectedObjectId: 'a', checkedObjectIds: new Set(['a', 'b']), overlayEnabled: true, unassignedStrokeIds: [], ...overrides };
+  return { nodes, edges: [], selectedStrokeId: 'one', selectedObjectId: 'a', checkedObjectIds: new Set(['a', 'b']), overlayEnabled: true, unassignedStrokeIds: [], readOnly: false, ...overrides };
 }
 
 describe('object panel view model', () => {
@@ -25,5 +25,9 @@ describe('object panel view model', () => {
     const layout = layoutGraph(nodes, 280, 160);
     expect(layout.every(({ x, y }) => Number.isFinite(x) && Number.isFinite(y))).toBe(true);
     expect(layout.every(({ x, y }) => x >= 0 && x <= 280 && y >= 0 && y <= 160)).toBe(true);
+  });
+
+  test('disables every correction in historical mode', () => {
+    expect(derivePanelControls(state({ readOnly: true }))).toEqual({ canMerge: false, canSplit: false, canAssignToChecked: false, canCreateObject: false });
   });
 });

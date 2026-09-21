@@ -1,6 +1,6 @@
 # Whiteboard Assistant
 
-A local-first browser whiteboard for fast freehand capture. Milestone 1B turns each committed stroke into a persistent, correctable work-object graph while retaining the compact pen, selection, eraser, pan, zoom, undo/redo, autosave, and portable-file experience. It uses native TypeScript, Canvas, DOM, and SVG, with no UI framework or server.
+A local-first browser whiteboard for fast freehand capture. Milestone 1C adds deterministic temporal context over the append-only ink and work-object histories while retaining the compact drawing, grouping, autosave, and portable-file experience. It uses native TypeScript, Canvas, DOM, and SVG, with no UI framework or server.
 
 ## Run locally
 
@@ -33,6 +33,8 @@ npm run preview   # serve the production build locally
 | Redo | `Ctrl/Cmd+Shift+Z` or `Ctrl+Y` |
 | Portable file | **Save file** downloads JSON; **Open** validates and replaces the board |
 | Inspect structure | **Objects** opens the graph inspector; `Escape` closes it |
+| Inspect history | **History** opens the event timeline; Previous/Next, the range, markers, and arrow keys select an event |
+| Leave history | **Return to now**, or press `Escape` once; a second `Escape` closes History |
 
 The color and width controls apply to new ink. Keyboard shortcuts are ignored while an editable control has focus.
 
@@ -52,8 +54,16 @@ The **Objects** panel shows active and superseded objects, visible and total mem
 
 To correct grouping, select active objects with their checkboxes and merge them, select a member stroke on the canvas and split it from a multi-stroke object, or select unassigned ink and assign it to one checked object or a new object. Merge and split preserve superseded parents and create new child IDs. These grouping corrections persist immediately and are intentionally separate from board undo/redo, which continues to affect ink edits only.
 
+## Temporal context
+
+The assistant-facing temporal layer is derived from the version-2 document rather than stored beside it. It dependency-merges the ink and association logs, reconstructs any event prefix, and exposes compact queries for the current context, a change range, object lineage, or a spatial region. Current context emphasizes visible ink, active objects, the current activity segment, and changes since a prior observation. Exact stroke geometry is opt-in. Erased geometry is returned only when a targeted region query explicitly sets `includeErased`.
+
+The **History** dock is the human inspection surface for the same derived timeline. Position zero is the empty board; every later position is the state after one event. Events more than 30 seconds after the preceding event begin a new activity segment. The optional heatmap samples changed ink in the selected segment and decays activity with a ten-second half-life. Association corrections appear as markers but do not create spatial heat.
+
+Historical positions are observational and read-only, including the latest event. Drawing, moving, erasing, undo/redo, grouping corrections, and file open/save stay disabled until **Return to now**. Historical pan and zoom use a temporary viewport, and autosave/export always read the untouched live workspace. On narrow screens, History and Objects use mutually exclusive overlays while retaining the selected historical position.
+
 ## Current scope
 
 Erasing removes an entire stroke, and selection operates on one stroke at a time. Touch drawing uses pointer events, but touch pinch gestures and palm rejection are not guaranteed. This milestone does not include partial-stroke erasing, image/PDF import, OCR, learned vision or language models, semantic labeling, a graph database, accounts, collaboration, or a server.
 
-Planned follow-on milestones build on the retained spatial and temporal data: 1C adds timeline/activity views, and 1D demonstrates scripted assistant insertion and inspection. Visual-model integration follows Milestone 1; it can consume stable work objects and lineage instead of interpreting an undifferentiated bitmap.
+Planned follow-on work will decide how an assistant chooses between compact current context and targeted history retrieval. Milestone 1D can then demonstrate scripted assistant insertion and inspection, writing only on top of the current canvas while using history as observational context. Visual-model integration follows Milestone 1; it can consume stable work objects, lineage, and temporal queries instead of interpreting an undifferentiated bitmap.

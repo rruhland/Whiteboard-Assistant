@@ -8,6 +8,7 @@ export type ObjectPanelState = {
   checkedObjectIds: ReadonlySet<string>;
   overlayEnabled: boolean;
   unassignedStrokeIds: string[];
+  readOnly: boolean;
 };
 
 export type ObjectPanelActions = {
@@ -24,6 +25,7 @@ export type ObjectOverlay = { id: string; label: string; bounds: Bounds; selecte
 export type GraphLayoutNode = { id: string; x: number; y: number };
 
 export function derivePanelControls(state: ObjectPanelState): { canMerge: boolean; canSplit: boolean; canAssignToChecked: boolean; canCreateObject: boolean } {
+  if (state.readOnly) return { canMerge: false, canSplit: false, canAssignToChecked: false, canCreateObject: false };
   const checkedActive = state.nodes.filter(({ id, status }) => status === 'active' && state.checkedObjectIds.has(id));
   const selectedOwner = state.nodes.find(({ status, strokeIds }) => status === 'active' && state.selectedStrokeId !== null && strokeIds.includes(state.selectedStrokeId));
   const isUnassigned = state.selectedStrokeId !== null && state.unassignedStrokeIds.includes(state.selectedStrokeId);
@@ -91,7 +93,7 @@ export class ObjectPanel {
       return `<g class="graph-node ${node.status}" data-object-id="${escapeHtml(node.id)}"><circle cx="${position.x}" cy="${position.y}" r="11" /><text x="${position.x}" y="${position.y + 4}">${escapeHtml(node.label)}</text></g>`;
     }).join('');
     const rows = state.nodes.map((node) => `<li class="object-row ${node.id === selectedObject?.id ? 'selected' : ''}">
-      <label><input type="checkbox" data-check-object="${escapeHtml(node.id)}" ${state.checkedObjectIds.has(node.id) ? 'checked' : ''} ${node.status !== 'active' ? 'disabled' : ''} />
+      <label><input type="checkbox" data-check-object="${escapeHtml(node.id)}" ${state.checkedObjectIds.has(node.id) ? 'checked' : ''} ${node.status !== 'active' || state.readOnly ? 'disabled' : ''} />
       <button type="button" data-select-object="${escapeHtml(node.id)}"><strong>${escapeHtml(node.label)}</strong><span>${node.status} · ${node.visibleStrokeCount}/${node.strokeIds.length} visible</span></button></label>
     </li>`).join('');
     const details = selectedObject ? `<dl class="object-details">
@@ -107,7 +109,7 @@ export class ObjectPanel {
       <div class="object-overview"><span><strong>${activeCount}</strong> active</span><span><strong>${state.unassignedStrokeIds.length}</strong> unassigned</span><label><input type="checkbox" data-overlay ${state.overlayEnabled ? 'checked' : ''} /> Bounds</label></div>
       <section><div class="section-heading"><h3>Map</h3><span><i class="near-key"></i> near <i class="lineage-key"></i> lineage</span></div><svg class="object-graph" viewBox="0 0 280 150" role="img" aria-label="Work object graph">${edgeMarkup}${nodeMarkup}</svg></section>
       <section><h3>Objects</h3><ul class="object-list">${rows}</ul></section>
-      <section class="corrections"><h3>Correct grouping</h3><div class="correction-actions"><button type="button" data-merge ${controls.canMerge ? '' : 'disabled'}>Merge checked</button><button type="button" data-split ${controls.canSplit ? '' : 'disabled'}>Split selected stroke</button><button type="button" data-assign ${controls.canAssignToChecked ? '' : 'disabled'}>Assign to checked</button><button type="button" data-assign-new ${controls.canCreateObject ? '' : 'disabled'}>New object</button></div><p class="panel-status" aria-live="polite">${escapeHtml(this.status)}</p></section>
+      <section class="corrections"><h3>Correct grouping</h3><div class="correction-actions"><button type="button" data-merge ${controls.canMerge ? '' : 'disabled'} ${state.readOnly ? 'title="Return to now to correct grouping"' : ''}>Merge checked</button><button type="button" data-split ${controls.canSplit ? '' : 'disabled'} ${state.readOnly ? 'title="Return to now to correct grouping"' : ''}>Split selected stroke</button><button type="button" data-assign ${controls.canAssignToChecked ? '' : 'disabled'} ${state.readOnly ? 'title="Return to now to correct grouping"' : ''}>Assign to checked</button><button type="button" data-assign-new ${controls.canCreateObject ? '' : 'disabled'} ${state.readOnly ? 'title="Return to now to correct grouping"' : ''}>New object</button></div><p class="panel-status" aria-live="polite">${escapeHtml(this.status)}</p></section>
       <section><h3>Details</h3>${details}</section>`;
     this.bind(state);
   }

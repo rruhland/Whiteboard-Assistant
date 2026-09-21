@@ -36,10 +36,70 @@ canvas:focus-visible,
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 30px;
+  grid-template-rows: auto minmax(0, 1fr) auto 30px;
   height: 100%;
   background: #f7f6f2;
 }
+
+.timeline-panel {
+  z-index: 6;
+  padding: 14px 18px;
+  border-top: 1px solid #ced4d0;
+  background: rgba(250, 249, 245, 0.99);
+  box-shadow: 0 -8px 24px rgba(31, 44, 47, 0.12);
+}
+
+.timeline-panel[hidden] { display: none; }
+
+.timeline-header,
+.timeline-controls,
+.timeline-details,
+.timeline-options {
+  display: flex;
+  align-items: center;
+}
+
+.timeline-header { justify-content: space-between; }
+.timeline-header h2 { margin: 0; font-size: 18px; }
+.timeline-header > button { border: 0; background: transparent; font-size: 22px; cursor: pointer; }
+.timeline-controls { gap: 9px; margin-top: 9px; }
+.timeline-controls input { flex: 1; accent-color: #317c88; }
+.timeline-controls button,
+.timeline-options button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid #ccd2ce;
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+.timeline-controls button:disabled,
+.timeline-options button:disabled { color: #9aa29f; cursor: default; }
+.timeline-markers { display: flex; height: 18px; margin: 4px 62px 0; gap: 3px; overflow: hidden; }
+.timeline-marker { flex: 1; min-width: 3px; max-width: 18px; height: 8px; padding: 0; border: 0; border-radius: 3px; background: #398591; cursor: pointer; }
+.timeline-marker.association { background: #d18a3e; }
+.timeline-marker.selected { height: 13px; outline: 2px solid #26383a; }
+.timeline-details { gap: 14px; min-height: 25px; color: #647073; font-size: 12px; }
+.timeline-details strong { color: #293638; }
+.timeline-options { justify-content: space-between; gap: 14px; font-size: 12px; }
+.timeline-options label { display: flex; align-items: center; gap: 5px; }
+.readonly-note { color: #8f4f2f; font-weight: 700; }
+
+.historical-status {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border-radius: 7px;
+  color: #fff;
+  background: #8d4d2f;
+  box-shadow: 0 2px 8px rgba(30, 35, 35, 0.2);
+  font-size: 12px;
+  font-weight: 700;
+}
+.historical-status[hidden] { display: none; }
 
 .toolbar {
   z-index: 2;
@@ -604,4 +664,18 @@ canvas:focus-visible,
     border: 0;
     background: rgba(29, 39, 41, 0.28);
   }
+
+  .timeline-panel {
+    position: fixed;
+    right: 0;
+    bottom: 30px;
+    left: 0;
+    max-height: 52vh;
+    overflow: auto;
+    border-radius: 14px 14px 0 0;
+  }
+
+  .timeline-details,
+  .timeline-options { flex-wrap: wrap; }
+  .timeline-markers { margin-right: 0; margin-left: 0; }
 }
