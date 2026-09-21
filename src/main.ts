@@ -90,6 +90,7 @@ function panelState(): ObjectPanelState {
     checkedObjectIds,
     overlayEnabled,
     unassignedStrokeIds: getUnassignedVisibleStrokes(workspace.associations, workspace.board.strokes).map(({ id }) => id),
+    readOnly: false,
   };
 }
 
