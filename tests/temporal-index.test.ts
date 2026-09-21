@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { buildTemporalIndex, projectHistory } from '../src/temporal';
+import { createAddEvent, type Stroke } from '../src/board';
+import type { BoardDocumentV3 } from '../src/document';
 import { activeLabels, annotationLifecycleFixture, documentWithAddEraseUndo, documentWithMergeAndSplit, emptyDocument, fixtureDocument, positionOf, version3AnnotationFixture } from './temporal-fixtures';
 
 describe('temporal index', () => {
@@ -29,6 +31,28 @@ describe('temporal index', () => {
 });
 
 describe('historical projection', () => {
+  test('projects every stroke in an atomic group transform at the same position', () => {
+    const stroke = (id: string, x: number): Stroke => ({ id, createdAt: 1, author: 'user', color: '#000', width: 2, points: [{ x, y: 0, pressure: 0.5, time: 1 }] });
+    const first = stroke('first', 0);
+    const second = stroke('second', 10);
+    const document: BoardDocumentV3 = {
+      version: 3,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      associationEvents: [],
+      events: [
+        createAddEvent([first, second], 'user', { id: 'add', time: 1 }),
+        { id: 'move', time: 2, actor: 'user', kind: 'move', changes: [
+          { before: first, after: stroke('first', 5) },
+          { before: second, after: stroke('second', 15) },
+        ] },
+      ],
+    };
+    const index = buildTemporalIndex(document);
+
+    expect(projectHistory(document, index, 1).board.strokes.map(({ points }) => points[0].x)).toEqual([0, 10]);
+    expect(projectHistory(document, index, 2).board.strokes.map(({ points }) => points[0].x)).toEqual([5, 15]);
+  });
+
   test('annotation history reconstructs approval, partial erase, batch delete, and undo', () => {
     const { document, index, positions } = annotationLifecycleFixture();
     const assistantCount = (position: number) => projectHistory(document, index, position).board.strokes.filter(({ author }) => author === 'assistant').length;

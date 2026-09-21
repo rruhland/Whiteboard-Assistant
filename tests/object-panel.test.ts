@@ -28,6 +28,11 @@ describe('object panel view model', () => {
     expect(derivePanelControls(state())).toMatchObject({ canMerge: true, canSplit: true, canAssignToChecked: false, canCreateObject: false });
   });
 
+  test('stroke-specific corrections require exactly one selected stroke from canvas state', () => {
+    expect(derivePanelControls(state({ selectedStrokeId: null }))).toMatchObject({ canSplit: false, canAssignToChecked: false, canCreateObject: false });
+    expect(derivePanelControls(state({ selectedStrokeId: 'one' }))).toMatchObject({ canSplit: true });
+  });
+
   test('enables assignment only for an unassigned selected stroke and at most one checked target', () => {
     expect(derivePanelControls(state({ selectedStrokeId: 'loose', unassignedStrokeIds: ['loose'], checkedObjectIds: new Set(['a']) }))).toMatchObject({ canAssignToChecked: true, canCreateObject: true });
     expect(derivePanelControls(state({ selectedStrokeId: 'loose', unassignedStrokeIds: ['loose'] }))).toMatchObject({ canAssignToChecked: false, canCreateObject: true });

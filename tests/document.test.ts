@@ -47,6 +47,24 @@ describe('versioned board documents', () => {
     expect(parseBoard(serializeBoard(document))).toEqual({ sourceVersion: 3, document });
   });
 
+  test('round-trips a version 3 atomic group move exactly', () => {
+    const first = stroke('first', 0);
+    const second = stroke('second', 10);
+    const movedFirst = { ...first, points: [{ ...first.points[0], x: 5 }] };
+    const movedSecond = { ...second, points: [{ ...second.points[0], x: 15 }] };
+    const document: BoardDocumentV3 = {
+      version: 3,
+      viewport,
+      associationEvents: [],
+      events: [
+        createAddEvent([first, second], 'user', { id: 'add', time: 1 }),
+        { id: 'move', time: 2, actor: 'user', kind: 'move', changes: [{ before: first, after: movedFirst }, { before: second, after: movedSecond }] },
+      ],
+    };
+
+    expect(parseBoard(serializeBoard(document))).toEqual({ sourceVersion: 3, document });
+  });
+
   test.each([1, 2] as const)('legacy version %s rejects assistant and batch ink', (version) => {
     const assistant = legacyDocument(version, [createAddEvent([stroke('a', 0, 'assistant')], 'assistant', { id: 'a', time: 1 })]);
     expect(() => parseBoard(JSON.stringify(assistant))).toThrow(/legacy|user|single/i);

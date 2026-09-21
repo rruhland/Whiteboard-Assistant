@@ -3,8 +3,9 @@ import { getUnassignedVisibleStrokes, projectGraph } from './association';
 import { AssistantPanel, visiblePreviewStrokes } from './assistant-panel';
 import { afterWorkspaceMutation, approveAssistantProposal, createAssistantSession, deleteAnnotation, generateAssistantSession, hasAssistantCandidate, regenerateAssistantSlot, rejectAssistantProposal, setProposalVisibility, type AssistantSession, type WorkspaceMutation } from './assistant-session';
 import { type Point } from './board';
+import { CanvasLibraryPanel } from './canvas-library-panel';
 import { CanvasRenderer } from './canvas';
-import { serializeBoard } from './document';
+import { serializeBoard, type BoardDocumentV3 } from './document';
 import { screenToWorld, hitTestStroke, hitTestStrokesAlongSegment, zoomAt } from './geometry';
 import {
   beginGesture,
@@ -13,14 +14,14 @@ import {
   updateGesture,
   type Gesture,
 } from './gesture';
-import { isSpacePanTarget } from './input';
+import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition, shouldClearSelectionOnStart, type Tool } from './input';
 import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
-import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
+import { containedStrokeIds, mergeSelection, selectionBounds, selectionOperationAt } from './selection';
+import { createCanvas, deleteCanvas, initializeCanvasLibrary, openCanvas, readPortableBoard, renameCanvas, saveActiveCanvas, type CanvasCatalogV1, type StorageLike } from './storage';
 import { buildActivitySamples } from './temporal';
 import { TimelinePanel } from './timeline-panel';
+import { abandonTouch, beginTouch, endTouch, isTouchTap, touchStartIntent, touchViewport, updateTouch, type TouchNavigation } from './touch-navigation';
 import { commitStroke, createHistorySession, loadWorkspace, rebuildHistorySession, returnToNow, selectHistoryPosition, workspaceDocument, type HistorySession, type WorkspaceState } from './workspace';
-
-type Tool = 'pen' | 'select' | 'eraser' | 'hand';
 
 function element<T extends HTMLElement>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -52,20 +53,31 @@ const historicalStatus = element<HTMLElement>('#historical-status');
 const assistantToggle = element<HTMLButtonElement>('#assistant-toggle');
 const assistantPanelRoot = element<HTMLElement>('#assistant-panel');
 const assistantPanelBackdrop = element<HTMLButtonElement>('#assistant-panel-backdrop');
+const canvasesToggle = element<HTMLButtonElement>('#canvases-toggle');
+const resetPageButton = element<HTMLButtonElement>('#reset-page');
+const canvasLibraryRoot = element<HTMLElement>('#canvas-library');
+const canvasLibraryBackdrop = element<HTMLButtonElement>('#canvas-library-backdrop');
 
 let workspace: WorkspaceState = loadWorkspace({
   sourceVersion: 3,
   document: { version: 3, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } },
 });
-let selectedId: string | null = null;
+let selectedIds = new Set<string>();
 let activeTool: Tool = 'pen';
 let activeGesture: Gesture | null = null;
+let touchNavigation: TouchNavigation | null = null;
+let touchMayDeselectSelection = false;
+let penEditPointerId: number | null = null;
+const suppressedTouchIds = new Set<number>();
 let spacePressed = false;
 let renderFrame = 0;
 let navigationSaveTimer = 0;
 let cachedEventCount = 0;
 let hasDrawn = false;
 let storage: StorageLike | null = null;
+let canvasCatalog: CanvasCatalogV1 = { version: 1, activeCanvasId: 'memory', canvases: [{ id: 'memory', name: 'Untitled canvas', createdAt: Date.now(), updatedAt: Date.now() }] };
+let canvasLibraryOpen = false;
+let canvasLibraryStatus = '';
 let objectPanelOpen = false;
 let overlayEnabled = true;
 let checkedObjectIds = new Set<string>();
@@ -77,15 +89,14 @@ let assistantSession: AssistantSession = createAssistantSession();
 
 try {
   storage = window.localStorage;
-  const restored = loadAutosave(storage);
-  if (restored.document) {
-    workspace = loadWorkspace(restored.document);
-    if (workspace.migratedFromVersion !== null) saveAutosave(storage, workspaceDocument(workspace));
-    saveStatus.textContent = workspace.migratedFromVersion !== null ? 'Restored and upgraded autosave' : 'Restored autosave';
-  } else if (restored.error) {
-    saveStatus.textContent = restored.error;
+  const identity = { id: globalThis.crypto.randomUUID(), now: Date.now() };
+  const library = initializeCanvasLibrary(storage, identity);
+  canvasCatalog = library.catalog;
+  workspace = loadWorkspace({ sourceVersion: 3, document: library.activeDocument });
+  if (library.notice) {
+    saveStatus.textContent = library.notice;
     saveStatus.dataset.state = 'error';
-  }
+  } else saveStatus.textContent = 'Restored active canvas';
 } catch (error) {
   saveStatus.textContent = `Autosave unavailable: ${error instanceof Error ? error.message : String(error)}`;
   saveStatus.dataset.state = 'error';
@@ -95,13 +106,17 @@ function currentDocument() {
   return workspaceDocument(workspace);
 }
 
+function singleSelectedId(): string | null {
+  return selectedIds.size === 1 ? selectedIds.values().next().value ?? null : null;
+}
+
 function panelState(): ObjectPanelState {
   const board = displayBoard();
   const associations = displayAssociations();
   const graph = projectGraph(associations, board.strokes);
   return {
     ...graph,
-    selectedStrokeId: isHistorical() ? null : selectedId,
+    selectedStrokeId: isHistorical() ? null : singleSelectedId(),
     selectedObjectId: isHistorical() ? historicalSelectedObjectId : selectedObjectId,
     checkedObjectIds,
     overlayEnabled,
@@ -114,7 +129,42 @@ let historySession: HistorySession = createHistorySession(workspace);
 function isHistorical(): boolean { return historySession.position !== null; }
 function displayBoard() { return historySession.projection?.board ?? workspace.board; }
 function displayAssociations() { return historySession.projection?.associations ?? workspace.associations; }
-function displayViewport() { return isHistorical() ? historySession.historicalViewport : workspace.viewport; }
+function liveDisplayViewport() { return isHistorical() ? historySession.historicalViewport : workspace.viewport; }
+function displayViewport() { return touchNavigation ? touchViewport(touchNavigation) : liveDisplayViewport(); }
+
+function blankDocument(): BoardDocumentV3 {
+  return { version: 3, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } };
+}
+
+function activeCanvasName(): string {
+  return canvasCatalog.canvases.find(({ id }) => id === canvasCatalog.activeCanvasId)?.name ?? 'Untitled canvas';
+}
+
+function replaceWorkspace(document: BoardDocumentV3): void {
+  cancelActiveGesture();
+  if (touchNavigation) {
+    for (const id of touchNavigation.contacts.keys()) {
+      if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    }
+  }
+  touchNavigation = null;
+  touchMayDeselectSelection = false;
+  suppressedTouchIds.clear();
+  penEditPointerId = null;
+  workspace = loadWorkspace({ sourceVersion: 3, document });
+  selectedIds.clear();
+  selectedObjectId = null;
+  historicalSelectedObjectId = null;
+  checkedObjectIds.clear();
+  historySession = createHistorySession(workspace);
+  assistantSession = createAssistantSession();
+  objectPanelOpen = false;
+  timelinePanelOpen = false;
+  assistantPanelOpen = false;
+  refreshCachedMetadata();
+  updateControls();
+  scheduleRender();
+}
 
 function refreshPanel(): void {
   objectsToggle.setAttribute('aria-expanded', String(objectPanelOpen));
@@ -177,8 +227,8 @@ const objectPanel = new ObjectPanel(objectPanelRoot, {
   },
   onSplitSelectedStroke() {
     correction(() => {
-      if (!selectedId) throw new Error('Select a stroke to split');
-      const strokeId = selectedId;
+      const strokeId = singleSelectedId();
+      if (!strokeId) throw new Error('Select exactly one stroke to split');
       const owner = workspace.associations.objects.find(({ status, strokeIds }) => status === 'active' && strokeIds.includes(strokeId));
       if (!owner) throw new Error('The selected stroke has no active object');
       const children = workspace.associations.splitObject(owner.id, strokeId);
@@ -189,8 +239,9 @@ const objectPanel = new ObjectPanel(objectPanelRoot, {
   },
   onAssignSelectedStroke(objectId) {
     correction(() => {
-      if (!selectedId) throw new Error('Select an unassigned stroke');
-      const assignedId = workspace.associations.assignStroke(selectedId, objectId);
+      const strokeId = singleSelectedId();
+      if (!strokeId) throw new Error('Select exactly one unassigned stroke');
+      const assignedId = workspace.associations.assignStroke(strokeId, objectId);
       selectedObjectId = assignedId;
       checkedObjectIds = new Set([assignedId]);
       return assignedId;
@@ -227,6 +278,7 @@ function enterHistoryPosition(position: number): void {
     const entering = !isHistorical();
     historySession = selectHistoryPosition(workspace, historySession, position);
     if (entering) historicalSelectedObjectId = null;
+    selectedIds.clear();
     assistantSession = { proposals: null, rejectedFingerprints: new Set(assistantSession.rejectedFingerprints) };
     assistantPanelOpen = false;
     activeTool = 'hand';
@@ -243,6 +295,13 @@ function enterHistoryPosition(position: number): void {
 
 function showNow(): void {
   cancelActiveGesture();
+  const abandoned = abandonTouch(touchNavigation);
+  touchNavigation = abandoned.navigation;
+  touchMayDeselectSelection = false;
+  for (const id of abandoned.pointerIds) {
+    suppressedTouchIds.add(id);
+    if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+  }
   historySession = returnToNow(workspace, historySession);
   historicalSelectedObjectId = null;
   updateControls();
@@ -300,6 +359,77 @@ const assistantPanel = new AssistantPanel(assistantPanelRoot, {
   },
 });
 
+function refreshCanvasLibrary(): void {
+  canvasesToggle.setAttribute('aria-expanded', String(canvasLibraryOpen));
+  canvasLibraryBackdrop.hidden = !canvasLibraryOpen;
+  canvasLibraryPanel.render({
+    open: canvasLibraryOpen,
+    activeCanvasId: canvasCatalog.activeCanvasId,
+    canvases: canvasCatalog.canvases,
+    status: canvasLibraryStatus,
+  });
+}
+
+function closeCanvasLibrary(): void {
+  canvasLibraryOpen = false;
+  refreshCanvasLibrary();
+  canvasesToggle.focus();
+}
+
+function canvasLibraryError(error: unknown): void {
+  canvasLibraryStatus = error instanceof Error ? error.message : String(error);
+  setStatus(canvasLibraryStatus, 'error');
+  refreshCanvasLibrary();
+}
+
+const canvasLibraryPanel = new CanvasLibraryPanel(canvasLibraryRoot, {
+  onClose: closeCanvasLibrary,
+  onCreate(name) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    try {
+      const created = createCanvas(storage, canvasCatalog, name, { id: globalThis.crypto.randomUUID(), now: Date.now() });
+      canvasCatalog = created.catalog;
+      replaceWorkspace(created.document);
+      canvasLibraryStatus = '';
+      closeCanvasLibrary();
+      setStatus('Canvas created and saved locally');
+    } catch (error) { canvasLibraryError(error); }
+  },
+  onOpen(id) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    try {
+      const opened = openCanvas(storage, canvasCatalog, id);
+      canvasCatalog = opened.catalog;
+      replaceWorkspace(opened.document);
+      canvasLibraryStatus = '';
+      closeCanvasLibrary();
+      setStatus('Canvas opened');
+    } catch (error) { canvasLibraryError(error); }
+  },
+  onRename(id, name) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    try {
+      canvasCatalog = renameCanvas(storage, canvasCatalog, id, name, Date.now());
+      canvasLibraryStatus = 'Canvas renamed';
+      setStatus('Canvas renamed');
+      refreshCanvasLibrary();
+    } catch (error) { canvasLibraryError(error); }
+  },
+  onDelete(id) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    const summary = canvasCatalog.canvases.find((canvas) => canvas.id === id);
+    if (!summary || !window.confirm(`Delete “${summary.name}” and its complete history?`)) return;
+    try {
+      const deleted = deleteCanvas(storage, canvasCatalog, id, { id: globalThis.crypto.randomUUID(), now: Date.now() });
+      canvasCatalog = deleted.catalog;
+      if (deleted.activeChanged && deleted.document) replaceWorkspace(deleted.document);
+      canvasLibraryStatus = 'Canvas deleted';
+      setStatus('Canvas deleted');
+      refreshCanvasLibrary();
+    } catch (error) { canvasLibraryError(error); }
+  },
+});
+
 function refreshCachedMetadata(): void {
   cachedEventCount = workspace.board.events.length;
   hasDrawn = workspace.board.events.some((event) => event.kind === 'add');
@@ -330,7 +460,7 @@ function scheduleRender(): void {
     renderer.render({
       strokes: board.strokes,
       viewport: displayViewport(),
-      selectedId: isHistorical() ? null : selectedId,
+      selectedIds: isHistorical() ? new Set() : selectedIds,
       gesture: activeGesture,
       inkColor: colorInput.value,
       inkWidth: Number(widthInput.value),
@@ -353,6 +483,7 @@ function updateControls(): void {
   redoButton.disabled = isHistorical() || !workspace.board.canRedo;
   openButton.disabled = isHistorical();
   saveButton.disabled = isHistorical();
+  resetPageButton.disabled = isHistorical();
   assistantToggle.disabled = isHistorical();
   colorInput.disabled = isHistorical();
   widthInput.disabled = isHistorical();
@@ -371,6 +502,7 @@ function updateControls(): void {
   timelinePanel.render({ index: historySession.index, open: timelinePanelOpen, position: historySession.position, heatmapEnabled: historySession.heatmapEnabled });
   refreshPanel();
   refreshAssistantPanel();
+  refreshCanvasLibrary();
 }
 
 function setStatus(message: string, state: 'normal' | 'error' = 'normal'): void {
@@ -384,9 +516,11 @@ function persist(): boolean {
     setStatus('Not saved: local storage is unavailable', 'error');
     return false;
   }
-  const result = saveAutosave(storage, currentDocument());
+  const result = saveActiveCanvas(storage, canvasCatalog, currentDocument(), Date.now());
   if (result.ok) {
+    canvasCatalog = result.catalog;
     setStatus('Saved locally');
+    if (canvasLibraryOpen) refreshCanvasLibrary();
     return true;
   }
   setStatus(result.error, 'error');
@@ -401,7 +535,8 @@ function persistNavigationSoon(): void {
 function afterEdit(mutation: WorkspaceMutation = 'ink'): void {
   assistantSession = afterWorkspaceMutation(assistantSession, mutation);
   refreshCachedMetadata();
-  if (selectedId && !workspace.board.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
+  const visibleIds = new Set(workspace.board.strokes.map(({ id }) => id));
+  selectedIds = new Set([...selectedIds].filter((id) => visibleIds.has(id)));
   rebuildHistory();
   updateControls();
   scheduleRender();
@@ -412,8 +547,17 @@ function cancelActiveGesture(): void {
   if (!activeGesture) return;
   const pointerId = activeGesture.pointerId;
   activeGesture = null;
+  if (penEditPointerId === pointerId) penEditPointerId = null;
   if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
   scheduleRender();
+}
+
+function applyNavigationViewport(viewport: { x: number; y: number; zoom: number }): void {
+  if (isHistorical()) historySession = { ...historySession, historicalViewport: viewport };
+  else {
+    workspace.viewport = viewport;
+    assistantSession = afterWorkspaceMutation(assistantSession, 'viewport');
+  }
 }
 
 function setTool(tool: Tool): void {
@@ -439,29 +583,73 @@ function hitAt(world: Point): string | undefined {
   return hitTestStroke(displayBoard().strokes, world, 7 / displayViewport().zoom)?.id;
 }
 
+function selectedStrokes() {
+  return displayBoard().strokes.filter(({ id }) => selectedIds.has(id));
+}
+
+function selectionTransform(pointerId: number, world: Point): Gesture | null {
+  const originals = selectedStrokes();
+  const bounds = selectionBounds(originals);
+  if (!bounds) return null;
+  const operation = selectionOperationAt(world, bounds, displayViewport().zoom);
+  return operation ? { type: 'transform', pointerId, bounds, originals, operation, current: world } : null;
+}
+
 function startPointer(event: PointerEvent): void {
-  if (activeGesture || (event.button !== 0 && event.button !== 1)) return;
-  const effectiveTool: Tool = event.button === 1 || spacePressed ? 'hand' : activeTool;
+  if (event.pointerType === 'touch') {
+    if (penEditPointerId !== null || activeGesture || suppressedTouchIds.size > 0) {
+      suppressedTouchIds.add(event.pointerId);
+    } else {
+      const transform = isHistorical() ? null : selectionTransform(event.pointerId, worldPoint(event));
+      if (touchStartIntent(touchNavigation !== null, transform !== null) === 'transform' && transform) {
+        activeGesture = beginGesture(activeGesture, transform);
+      } else {
+        if (!touchNavigation) touchMayDeselectSelection = selectedIds.size > 0;
+        touchNavigation = beginTouch(touchNavigation, event.pointerId, screenPoint(event), displayViewport());
+      }
+    }
+    canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    scheduleRender();
+    return;
+  }
+  if (event.pointerType === 'pen' && penContactTransition(event, penEditPointerId) !== 'start') return;
+  if (activeGesture) return;
+  const effectiveTool = effectivePointerTool(event, activeTool, spacePressed);
+  if (!effectiveTool || effectiveTool === 'touch') return;
+  if (event.pointerType === 'pen' && touchNavigation) {
+    const viewport = touchViewport(touchNavigation);
+    for (const id of touchNavigation.contacts.keys()) suppressedTouchIds.add(id);
+    touchNavigation = null;
+    touchMayDeselectSelection = false;
+    applyNavigationViewport(viewport);
+    if (!isHistorical()) persistNavigationSoon();
+  }
   if (isHistorical() && effectiveTool !== 'hand') { event.preventDefault(); return; }
   const screen = screenPoint(event);
   const world = worldPoint(event);
   let next: Gesture | null = null;
+  const selectedTransform = (effectiveTool === 'select' || (event.pointerType === 'pen' && effectiveTool === 'pen'))
+    ? selectionTransform(event.pointerId, world)
+    : null;
+  if (shouldClearSelectionOnStart(event.pointerType, effectiveTool, event.shiftKey, selectedTransform !== null)) selectedIds.clear();
 
-  if (effectiveTool === 'pen' && event.button === 0) {
+  if (selectedTransform) {
+    next = selectedTransform;
+  } else if (effectiveTool === 'pen') {
     next = { type: 'ink', pointerId: event.pointerId, points: [world] };
   } else if (effectiveTool === 'hand') {
     next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...displayViewport() } };
-  } else if (effectiveTool === 'select' && event.button === 0) {
-    const strokeId = hitAt(world);
-    selectedId = strokeId ?? null;
-    if (strokeId) next = { type: 'move', pointerId: event.pointerId, strokeId, origin: world, current: world };
-  } else if (effectiveTool === 'eraser' && event.button === 0) {
+  } else if (effectiveTool === 'select') {
+    next = { type: 'marquee', pointerId: event.pointerId, origin: world, current: world, additive: event.shiftKey };
+  } else if (effectiveTool === 'eraser') {
     const strokeId = hitAt(world);
     next = { type: 'erase', pointerId: event.pointerId, strokeIds: strokeId ? [strokeId] : [], current: world };
   }
 
   if (next) {
     activeGesture = beginGesture(activeGesture, next);
+    if (event.pointerType === 'pen') penEditPointerId = event.pointerId;
     canvas.focus({ preventScroll: true });
     canvas.setPointerCapture(event.pointerId);
   }
@@ -471,6 +659,29 @@ function startPointer(event: PointerEvent): void {
 }
 
 function movePointer(event: PointerEvent): void {
+  if (event.pointerType === 'touch') {
+    if (activeGesture?.type === 'transform' && activeGesture.pointerId === event.pointerId) {
+      activeGesture = updateGesture(activeGesture, event.pointerId, { world: worldPoint(event) });
+      event.preventDefault();
+      scheduleRender();
+    } else if (touchNavigation?.contacts.has(event.pointerId)) {
+      touchNavigation = updateTouch(touchNavigation, event.pointerId, screenPoint(event));
+      event.preventDefault();
+      scheduleRender();
+    }
+    return;
+  }
+  if (event.pointerType === 'pen') {
+    const transition = penContactTransition(event, penEditPointerId);
+    if (transition === 'start') {
+      startPointer(event);
+      return;
+    }
+    if (transition === 'end') {
+      finishActivePointer(event, false);
+      return;
+    }
+  }
   if (!activeGesture || activeGesture.pointerId !== event.pointerId) return;
   if (activeGesture.type === 'pan') {
     activeGesture = updateGesture(activeGesture, event.pointerId, { screen: screenPoint(event) });
@@ -491,11 +702,13 @@ function movePointer(event: PointerEvent): void {
   scheduleRender();
 }
 
-function endPointer(event: PointerEvent): void {
+function finishActivePointer(event: PointerEvent, includeFinalSample: boolean): void {
   if (!activeGesture || activeGesture.pointerId !== event.pointerId) return;
-  movePointer(event);
+  if (includeFinalSample) movePointer(event);
+  if (!activeGesture || activeGesture.pointerId !== event.pointerId) return;
   const commit = finishGesture(activeGesture, event.pointerId);
   activeGesture = null;
+  if (penEditPointerId === event.pointerId) penEditPointerId = null;
   if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   if (!commit) return;
 
@@ -514,13 +727,55 @@ function endPointer(event: PointerEvent): void {
     for (const id of commit.strokeIds) workspace.board.eraseStroke(id);
     if (commit.strokeIds.length) afterEdit('partial-erase');
     else scheduleRender();
+  } else if (commit.type === 'marquee') {
+    selectedIds = mergeSelection(selectedIds, containedStrokeIds(displayBoard().strokes, commit.start, commit.end), commit.additive);
+    updateControls();
+    scheduleRender();
+  } else if (commit.type === 'transform') {
+    const current = new Map(workspace.board.strokes.map((stroke) => [stroke.id, stroke]));
+    const changed = commit.strokes.some((stroke) => {
+      const before = current.get(stroke.id);
+      return before && stroke.points.some((point, index) => point.x !== before.points[index]?.x || point.y !== before.points[index]?.y);
+    });
+    if (changed) {
+      workspace.board.updateStrokes(commit.strokes);
+      afterEdit('ink');
+    } else scheduleRender();
   } else {
-    if (isHistorical()) historySession = { ...historySession, historicalViewport: commit.viewport };
-    else { workspace.viewport = commit.viewport; assistantSession = afterWorkspaceMutation(assistantSession, 'viewport'); }
+    applyNavigationViewport(commit.viewport);
     updateControls();
     scheduleRender();
     if (!isHistorical()) persistNavigationSoon();
   }
+}
+
+function endPointer(event: PointerEvent): void {
+  if (event.pointerType === 'touch') {
+    if (suppressedTouchIds.delete(event.pointerId)) {
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      return;
+    }
+    if (activeGesture?.type === 'transform' && activeGesture.pointerId === event.pointerId) {
+      finishActivePointer(event, true);
+      return;
+    }
+    if (!touchNavigation?.contacts.has(event.pointerId)) return;
+    touchNavigation = updateTouch(touchNavigation, event.pointerId, screenPoint(event));
+    const viewport = touchViewport(touchNavigation);
+    const deselect = touchMayDeselectSelection && isTouchTap(touchNavigation);
+    touchNavigation = endTouch(touchNavigation, event.pointerId);
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (!touchNavigation) {
+      applyNavigationViewport(viewport);
+      if (deselect) selectedIds.clear();
+      touchMayDeselectSelection = false;
+      updateControls();
+      if (!isHistorical()) persistNavigationSoon();
+    }
+    scheduleRender();
+    return;
+  }
+  finishActivePointer(event, event.pointerType !== 'pen');
 }
 
 function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
@@ -556,13 +811,30 @@ canvas.addEventListener('pointerdown', startPointer);
 canvas.addEventListener('pointermove', movePointer);
 canvas.addEventListener('pointerup', endPointer);
 const cancelPointerGesture = (event: PointerEvent): void => {
+  if (event.pointerType === 'touch') {
+    if (ownsGesturePointer(activeGesture, event.pointerId)) {
+      cancelActiveGesture();
+      return;
+    }
+    suppressedTouchIds.delete(event.pointerId);
+    if (touchNavigation?.contacts.has(event.pointerId)) {
+      const viewport = touchViewport(touchNavigation);
+      touchNavigation = endTouch(touchNavigation, event.pointerId);
+      if (!touchNavigation) {
+        applyNavigationViewport(viewport);
+        touchMayDeselectSelection = false;
+      }
+      scheduleRender();
+    }
+    return;
+  }
   if (ownsGesturePointer(activeGesture, event.pointerId)) cancelActiveGesture();
 };
 canvas.addEventListener('pointercancel', cancelPointerGesture);
 canvas.addEventListener('lostpointercapture', cancelPointerGesture);
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 canvas.addEventListener('wheel', (event) => {
-  if (activeGesture) return;
+  if (activeGesture || touchNavigation) return;
   event.preventDefault();
   changeZoom(Math.exp(-event.deltaY * 0.0015), screenPoint(event));
 }, { passive: false });
@@ -586,6 +858,29 @@ element<HTMLButtonElement>('#reset-view').addEventListener('click', () => {
   updateControls();
   scheduleRender();
   if (!isHistorical()) persistNavigationSoon();
+});
+
+canvasesToggle.addEventListener('click', () => {
+  cancelActiveGesture();
+  if (touchNavigation) {
+    applyNavigationViewport(touchViewport(touchNavigation));
+    touchNavigation = null;
+    touchMayDeselectSelection = false;
+  }
+  objectPanelOpen = false;
+  timelinePanelOpen = false;
+  assistantPanelOpen = false;
+  canvasLibraryOpen = true;
+  canvasLibraryStatus = '';
+  updateControls();
+  canvasLibraryPanel.focusEntry();
+});
+canvasLibraryBackdrop.addEventListener('click', closeCanvasLibrary);
+resetPageButton.addEventListener('click', () => {
+  if (isHistorical()) return;
+  if (!window.confirm(`Reset “${activeCanvasName()}”? This permanently clears its canvas, objects, and complete history.`)) return;
+  replaceWorkspace(blankDocument());
+  if (persist()) setStatus('Canvas reset');
 });
 
 saveButton.addEventListener('click', () => {
@@ -612,29 +907,40 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
   if (!file) return;
   try {
-    const result = openPortableBoard(await file.text(), { sourceVersion: 3, document: currentDocument() }, storage);
+    const result = readPortableBoard(await file.text(), { sourceVersion: 3, document: currentDocument() });
     if (!result.replaced) {
       setStatus(result.error ?? 'Open failed', 'error');
       return;
     }
-    workspace = loadWorkspace(result.document);
-    historySession = createHistorySession(workspace);
-    assistantSession = createAssistantSession();
-    assistantPanelOpen = false;
-    selectedId = null;
-    selectedObjectId = null;
-    checkedObjectIds.clear();
-    refreshCachedMetadata();
-    updateControls();
-    scheduleRender();
-    if (result.error) setStatus(result.error, 'error');
-    else if (persist()) setStatus(workspace.migratedFromVersion !== null ? 'Board opened, upgraded, and saved locally' : 'Board opened and saved locally');
+    const sourceVersion = result.document.sourceVersion;
+    const document = workspaceDocument(loadWorkspace(result.document));
+    replaceWorkspace(document);
+    if (persist()) setStatus(sourceVersion === 3 ? 'Board opened and saved to active canvas' : 'Board opened, upgraded, and saved to active canvas');
   } catch (error) {
     setStatus(`Open failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
   }
 });
 
 window.addEventListener('keydown', (event) => {
+  const libraryIntent = modalKeyboardIntent(canvasLibraryOpen, event.key);
+  if (libraryIntent === 'close') {
+    event.preventDefault();
+    closeCanvasLibrary();
+    return;
+  }
+  if (libraryIntent === 'cycle-focus') {
+    const focusable = Array.from(canvasLibraryRoot.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'));
+    if (focusable.length) {
+      event.preventDefault();
+      const current = focusable.indexOf(document.activeElement as HTMLElement);
+      const next = current < 0
+        ? (event.shiftKey ? focusable.length - 1 : 0)
+        : (current + (event.shiftKey ? -1 : 1) + focusable.length) % focusable.length;
+      focusable[next].focus();
+    }
+    return;
+  }
+  if (libraryIntent === 'contain') return;
   if (event.key === 'Escape' && isHistorical()) {
     event.preventDefault();
     showNow();
@@ -689,12 +995,12 @@ window.addEventListener('keydown', (event) => {
   if (tool) {
     event.preventDefault();
     setTool(tool);
-  } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId) {
+  } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedIds.size) {
     if (isHistorical()) return;
     event.preventDefault();
     cancelActiveGesture();
-    workspace.board.eraseStroke(selectedId);
-    selectedId = null;
+    workspace.board.eraseStrokes([...selectedIds]);
+    selectedIds.clear();
     afterEdit('partial-erase');
   }
 });
@@ -703,6 +1009,12 @@ window.addEventListener('keyup', (event) => {
 });
 window.addEventListener('blur', () => {
   spacePressed = false;
+  if (touchNavigation) {
+    applyNavigationViewport(touchViewport(touchNavigation));
+    touchNavigation = null;
+    touchMayDeselectSelection = false;
+  }
+  suppressedTouchIds.clear();
   cancelActiveGesture();
 });
 
