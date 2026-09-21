@@ -44,7 +44,7 @@ describe('versioned board documents', () => {
   });
 
   test('rejects association history that references an unknown stroke', () => {
-    const object = { id: 'work-a', label: 'A', strokeIds: ['missing'], createdAt: 1, lastAssociatedAt: 1, status: 'active' as const, parentIds: [] };
+    const object = { objectType: 'content' as const, id: 'work-a', label: 'A', strokeIds: ['missing'], createdAt: 1, lastAssociatedAt: 1, status: 'active' as const, parentIds: [] };
     const document: BoardDocumentV2 = {
       version: 2, events: [], viewport,
       associationEvents: [{ id: 'assoc-a', time: 1, actor: 'system', kind: 'auto-create', reason: 'test', changes: [{ before: null, after: object }] }],

@@ -3,8 +3,8 @@ import { derivePanelControls, layoutGraph, type ObjectPanelState } from '../src/
 import type { GraphNode } from '../src/association';
 
 const nodes: GraphNode[] = [
-  { id: 'a', label: 'A', strokeIds: ['one', 'two'], createdAt: 0, lastAssociatedAt: 1, status: 'active', parentIds: [], visibleStrokeCount: 2, bounds: { minX: -20, minY: -5, maxX: -20, maxY: -5 } },
-  { id: 'b', label: 'B', strokeIds: ['three'], createdAt: 0, lastAssociatedAt: 2, status: 'active', parentIds: [], visibleStrokeCount: 1, bounds: { minX: 10, minY: 10, maxX: 20, maxY: 20 } },
+  { objectType: 'content', id: 'a', label: 'A', strokeIds: ['one', 'two'], createdAt: 0, lastAssociatedAt: 1, status: 'active', parentIds: [], visibleStrokeCount: 2, bounds: { minX: -20, minY: -5, maxX: -20, maxY: -5 } },
+  { objectType: 'content', id: 'b', label: 'B', strokeIds: ['three'], createdAt: 0, lastAssociatedAt: 2, status: 'active', parentIds: [], visibleStrokeCount: 1, bounds: { minX: 10, minY: 10, maxX: 20, maxY: 20 } },
 ];
 
 function state(overrides: Partial<ObjectPanelState> = {}): ObjectPanelState {

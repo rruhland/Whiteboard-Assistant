@@ -9,7 +9,7 @@ function historyWorkspaceFixture() {
     version: 2,
     viewport: { x: 4, y: 8, zoom: 1.5 },
     events: [{ id: 'add-1', time: 1, actor: 'user', kind: 'add', changes: [{ before: null, after: stroke }] }],
-    associationEvents: [{ id: 'assoc-1', time: 1, actor: 'system', kind: 'auto-create', reason: 'fixture', changes: [{ before: null, after: { id: 'object-1', label: 'A', strokeIds: ['stroke-1'], createdAt: 1, lastAssociatedAt: 1, status: 'active', parentIds: [] } }] }],
+    associationEvents: [{ id: 'assoc-1', time: 1, actor: 'system', kind: 'auto-create', reason: 'fixture', changes: [{ before: null, after: { objectType: 'content', id: 'object-1', label: 'A', strokeIds: ['stroke-1'], createdAt: 1, lastAssociatedAt: 1, status: 'active', parentIds: [] } }] }],
   } });
 }
 

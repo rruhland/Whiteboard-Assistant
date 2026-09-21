@@ -7,7 +7,7 @@ import { buildTemporalIndex } from '../src/temporal';
 const viewport = { x: 0, y: 0, zoom: 1 };
 const point = (x: number, y = 0) => ({ x, y, pressure: 0.5, time: 0 });
 export const stroke = (id: string, createdAt: number, x = 0, y = 0): Stroke => ({ id, createdAt, author: 'user', color: '#111', width: 2, points: [point(x, y), point(x + 32, y)] });
-const object = (id: string, label: string, strokeIds: string[], time: number, status: WorkObject['status'] = 'active', parentIds: string[] = []): WorkObject => ({ id, label, strokeIds, createdAt: time, lastAssociatedAt: time, status, parentIds });
+const object = (id: string, label: string, strokeIds: string[], time: number, status: WorkObject['status'] = 'active', parentIds: string[] = []): WorkObject => ({ objectType: 'content', id, label, strokeIds, createdAt: time, lastAssociatedAt: time, status, parentIds });
 
 export const emptyDocument: BoardDocumentV2 = { version: 2, events: [], associationEvents: [], viewport };
 

@@ -27,7 +27,7 @@ describe('activity map', () => {
     expect(buildActivitySamples(eraseDocument, eraseIndex, positionOf(eraseIndex, 'ink:erase')).length).toBeGreaterThan(0);
 
     const base = fixtureDocument({ inkTimes: [0] });
-    const association: AssociationEvent = { id: 'late-association', time: 40_000, actor: 'system', kind: 'auto-create', reason: 'fixture', changes: [{ before: null, after: { id: 'object', label: 'A', strokeIds: ['stroke-1'], createdAt: 40_000, lastAssociatedAt: 40_000, status: 'active', parentIds: [] } }] };
+    const association: AssociationEvent = { id: 'late-association', time: 40_000, actor: 'system', kind: 'auto-create', reason: 'fixture', changes: [{ before: null, after: { objectType: 'content', id: 'object', label: 'A', strokeIds: ['stroke-1'], createdAt: 40_000, lastAssociatedAt: 40_000, status: 'active', parentIds: [] } }] };
     const associationDocument = { ...base, associationEvents: [association] };
     const associationIndex = buildTemporalIndex(associationDocument);
     expect(buildActivitySamples(associationDocument, associationIndex, associationIndex.entries.length)).toEqual([]);
