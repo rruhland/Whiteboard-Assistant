@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Point, Viewport } from '../src/board';
+import type { Point, Stroke, Viewport } from '../src/board';
 import {
   beginGesture,
   finishGesture,
@@ -7,8 +7,10 @@ import {
   updateGesture,
   type Gesture,
 } from '../src/gesture';
+import { selectionBounds } from '../src/selection';
 
 const point = (x: number, y: number, pressure = 0.5, time = 100): Point => ({ x, y, pressure, time });
+const stroke = (id: string, x: number): Stroke => ({ id, createdAt: 1, author: 'user', color: '#000', width: 2, points: [point(x, 0)] });
 
 describe('gesture state', () => {
   it('keeps the first pointer active and ignores updates from other pointers', () => {
@@ -71,5 +73,27 @@ describe('gesture state', () => {
 
     expect(ownsGesturePointer(gesture, 999)).toBe(false);
     expect(ownsGesturePointer(gesture, 4)).toBe(true);
+  });
+
+  it('updates and commits a reverse-direction additive marquee', () => {
+    let gesture: Gesture = { type: 'marquee', pointerId: 7, origin: point(20, 30), current: point(20, 30), additive: true };
+    gesture = updateGesture(gesture, 7, { world: point(2, 4) });
+    expect(finishGesture(gesture, 7)).toEqual({ type: 'marquee', start: point(20, 30), end: point(2, 4), additive: true });
+  });
+
+  it('commits transformed preview strokes from the original snapshot', () => {
+    const originals = [stroke('a', 0), stroke('b', 10)];
+    let gesture: Gesture = {
+      type: 'transform',
+      pointerId: 8,
+      bounds: selectionBounds(originals)!,
+      originals,
+      operation: { type: 'move', origin: point(0, 0) },
+      current: point(0, 0),
+    };
+    gesture = updateGesture(gesture, 8, { world: point(5, 3) });
+    const commit = finishGesture(gesture, 8);
+    expect(commit?.type).toBe('transform');
+    expect(commit?.type === 'transform' && commit.strokes.map(({ points }) => points[0])).toEqual([point(5, 3), point(15, 3)]);
   });
 });

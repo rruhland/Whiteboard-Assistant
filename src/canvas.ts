@@ -1,12 +1,13 @@
 import type { Stroke, Viewport } from './board';
 import { previewViewport, type Gesture } from './gesture';
 import type { ObjectOverlay } from './object-panel';
+import { selectionBounds, selectionHandlePoints, transformSelection, type Bounds } from './selection';
 import type { ActivitySample } from './temporal';
 
 export type RenderState = {
   strokes: Stroke[];
   viewport: Viewport;
-  selectedId: string | null;
+  selectedIds: ReadonlySet<string>;
   gesture: Gesture | null;
   inkColor: string;
   inkWidth: number;
@@ -91,10 +92,15 @@ export class CanvasRenderer {
     const moveX = state.gesture?.type === 'move' ? state.gesture.current.x - state.gesture.origin.x : 0;
     const moveY = state.gesture?.type === 'move' ? state.gesture.current.y - state.gesture.origin.y : 0;
 
+    const transformPreview = state.gesture?.type === 'transform'
+      ? transformSelection(state.gesture.originals, state.gesture.bounds, state.gesture.operation, state.gesture.current)
+      : [];
+    const transformedIds = new Set(transformPreview.map(({ id }) => id));
+
     for (const stroke of state.strokes) {
-      if (erased.has(stroke.id) || stroke.id === movingId) continue;
+      if (erased.has(stroke.id) || stroke.id === movingId || transformedIds.has(stroke.id)) continue;
       if (state.selectedObjectStrokeIds.has(stroke.id)) drawStroke(context, stroke, 0, 0, '#d98945', stroke.width + 3 / viewport.zoom);
-      if (stroke.id === state.selectedId) drawStroke(context, stroke, 0, 0, '#2f7d8c', stroke.width + 5 / viewport.zoom);
+      if (state.selectedIds.has(stroke.id)) drawStroke(context, stroke, 0, 0, '#2f7d8c', stroke.width + 5 / viewport.zoom);
       drawStroke(context, stroke);
     }
 
@@ -105,6 +111,11 @@ export class CanvasRenderer {
         drawStroke(context, moving, moveX, moveY, '#2f7d8c', moving.width + 5 / viewport.zoom);
         drawStroke(context, moving, moveX, moveY);
       }
+    }
+
+    for (const stroke of transformPreview) {
+      drawStroke(context, stroke, 0, 0, '#2f7d8c', stroke.width + 5 / viewport.zoom);
+      drawStroke(context, stroke);
     }
 
     if (state.gesture?.type === 'ink') {
@@ -122,6 +133,56 @@ export class CanvasRenderer {
     }
 
     for (const overlay of state.objectOverlays) this.drawObjectOverlay(overlay, viewport.zoom);
+
+    const selectionStrokes = transformPreview.length
+      ? transformPreview
+      : state.strokes.filter(({ id }) => state.selectedIds.has(id));
+    const selectedBounds = selectionBounds(selectionStrokes);
+    if (selectedBounds) this.drawSelection(selectedBounds, viewport.zoom);
+    if (state.gesture?.type === 'marquee') this.drawMarquee(state.gesture.origin, state.gesture.current, viewport.zoom);
+  }
+
+  private drawMarquee(start: { x: number; y: number }, end: { x: number; y: number }, zoom: number): void {
+    const context = this.context;
+    context.save();
+    context.strokeStyle = '#2f7d8c';
+    context.fillStyle = 'rgba(47, 125, 140, 0.08)';
+    context.lineWidth = 1.5 / zoom;
+    context.setLineDash([6 / zoom, 4 / zoom]);
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    context.fillRect(x, y, width, height);
+    context.strokeRect(x, y, width, height);
+    context.restore();
+  }
+
+  private drawSelection(bounds: Bounds, zoom: number): void {
+    const context = this.context;
+    const handles = selectionHandlePoints(bounds, zoom);
+    const size = 8 / zoom;
+    context.save();
+    context.strokeStyle = '#1f6876';
+    context.fillStyle = '#fff';
+    context.lineWidth = 1.5 / zoom;
+    context.setLineDash([4 / zoom, 3 / zoom]);
+    context.strokeRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+    context.setLineDash([]);
+    context.beginPath();
+    context.moveTo(handles.n.x, handles.n.y);
+    context.lineTo(handles.rotate.x, handles.rotate.y);
+    context.stroke();
+    for (const handle of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const) {
+      const point = handles[handle];
+      context.fillRect(point.x - size / 2, point.y - size / 2, size, size);
+      context.strokeRect(point.x - size / 2, point.y - size / 2, size, size);
+    }
+    context.beginPath();
+    context.arc(handles.rotate.x, handles.rotate.y, size / 2, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.restore();
   }
 
   private drawActivity(samples: ActivitySample[], viewport: Viewport, ratio: number): void {

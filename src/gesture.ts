@@ -1,4 +1,5 @@
-import type { Point, Viewport } from './board';
+import type { Point, Stroke, Viewport } from './board';
+import { transformSelection, type Bounds, type SelectionOperation } from './selection';
 
 export type InkGesture = { type: 'ink'; pointerId: number; points: Point[] };
 export type MoveGesture = { type: 'move'; pointerId: number; strokeId: string; origin: Point; current: Point };
@@ -10,8 +11,17 @@ export type PanGesture = {
   currentScreen: { x: number; y: number };
   originViewport: Viewport;
 };
+export type MarqueeGesture = { type: 'marquee'; pointerId: number; origin: Point; current: Point; additive: boolean };
+export type TransformGesture = {
+  type: 'transform';
+  pointerId: number;
+  bounds: Bounds;
+  originals: Stroke[];
+  operation: SelectionOperation;
+  current: Point;
+};
 
-export type Gesture = InkGesture | MoveGesture | EraseGesture | PanGesture;
+export type Gesture = InkGesture | MoveGesture | EraseGesture | PanGesture | MarqueeGesture | TransformGesture;
 
 export type GestureUpdate = {
   world?: Point;
@@ -23,7 +33,9 @@ export type GestureCommit =
   | { type: 'ink'; points: Point[] }
   | { type: 'move'; strokeId: string; dx: number; dy: number }
   | { type: 'erase'; strokeIds: string[] }
-  | { type: 'pan'; viewport: Viewport };
+  | { type: 'pan'; viewport: Viewport }
+  | { type: 'marquee'; start: Point; end: Point; additive: boolean }
+  | { type: 'transform'; strokes: Stroke[] };
 
 export function beginGesture(active: Gesture | null, next: Gesture): Gesture {
   return active ?? next;
@@ -49,6 +61,9 @@ export function updateGesture(gesture: Gesture, pointerId: number, update: Gestu
   if (gesture.type === 'pan' && update.screen) {
     return { ...gesture, currentScreen: update.screen };
   }
+  if ((gesture.type === 'marquee' || gesture.type === 'transform') && update.world) {
+    return { ...gesture, current: update.world };
+  }
   return gesture;
 }
 
@@ -72,5 +87,7 @@ export function finishGesture(gesture: Gesture | null, pointerId: number): Gestu
     };
   }
   if (gesture.type === 'erase') return { type: 'erase', strokeIds: gesture.strokeIds };
+  if (gesture.type === 'marquee') return { type: 'marquee', start: gesture.origin, end: gesture.current, additive: gesture.additive };
+  if (gesture.type === 'transform') return { type: 'transform', strokes: transformSelection(gesture.originals, gesture.bounds, gesture.operation, gesture.current) };
   return { type: 'pan', viewport: previewViewport(gesture) };
 }
