@@ -70,6 +70,7 @@ export type TemporalRegionResult = {
   erasedStrokeIds: string[];
   strokes?: Stroke[];
 };
+export type ActivitySample = { x: number; y: number; intensity: number };
 
 function strokeIds(event: BoardEvent | AssociationEvent): string[] {
   return event.changes.flatMap(({ before, after }) => {
@@ -333,4 +334,46 @@ export function queryRegionHistory(
     erasedStrokeIds,
     ...(options.detail === 'geometry' ? { strokes: strokeIds.map((id) => structuredClone(snapshots.get(id) as Stroke)) } : {}),
   };
+}
+
+function sampleStroke(stroke: Stroke, intensity: number): ActivitySample[] {
+  if (stroke.points.length === 1) return [{ x: stroke.points[0].x, y: stroke.points[0].y, intensity }];
+  const samples: ActivitySample[] = [];
+  let nextDistance = 0;
+  let traversed = 0;
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const from = stroke.points[index - 1];
+    const to = stroke.points[index];
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    if (length === 0) continue;
+    while (nextDistance <= traversed + length) {
+      const amount = (nextDistance - traversed) / length;
+      samples.push({ x: from.x + (to.x - from.x) * amount, y: from.y + (to.y - from.y) * amount, intensity });
+      nextDistance += 16;
+    }
+    traversed += length;
+  }
+  const last = stroke.points.at(-1) as Stroke['points'][number];
+  const previous = samples.at(-1);
+  if (!previous || previous.x !== last.x || previous.y !== last.y) samples.push({ x: last.x, y: last.y, intensity });
+  return samples;
+}
+
+export function buildActivitySamples(document: BoardDocumentV2, index: TemporalIndex, position: number): ActivitySample[] {
+  validatePosition(index, position);
+  if (position === 0) return [];
+  const selected = index.entries[position - 1];
+  const segment = index.segments.find(({ id }) => id === selected.segmentId);
+  if (!segment) return [];
+  const samples: ActivitySample[] = [];
+  for (const entry of index.entries.slice(segment.startPosition - 1, position)) {
+    const event = inkEvent(document, entry);
+    if (!event) continue;
+    const intensity = 2 ** (-Math.max(0, selected.time - event.time) / 10_000);
+    for (const change of event.changes) {
+      const value = change.after ?? change.before;
+      if (value) samples.push(...sampleStroke(value, intensity));
+    }
+  }
+  return samples;
 }

@@ -1,6 +1,7 @@
 import type { Stroke, Viewport } from './board';
 import { previewViewport, type Gesture } from './gesture';
 import type { ObjectOverlay } from './object-panel';
+import type { ActivitySample } from './temporal';
 
 export type RenderState = {
   strokes: Stroke[];
@@ -11,6 +12,7 @@ export type RenderState = {
   inkWidth: number;
   objectOverlays: ObjectOverlay[];
   selectedObjectStrokeIds: ReadonlySet<string>;
+  activitySamples: ActivitySample[];
 };
 
 function drawStroke(
@@ -42,6 +44,7 @@ function drawStroke(
 
 export class CanvasRenderer {
   private readonly context: CanvasRenderingContext2D;
+  private readonly heatCanvas = document.createElement('canvas');
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const context = canvas.getContext('2d');
@@ -70,6 +73,8 @@ export class CanvasRenderer {
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, bounds.width, bounds.height);
     this.drawGrid(bounds.width, bounds.height, viewport, ratio);
+
+    this.drawActivity(state.activitySamples, viewport, ratio);
 
     context.setTransform(
       ratio * viewport.zoom,
@@ -106,6 +111,30 @@ export class CanvasRenderer {
     }
 
     for (const overlay of state.objectOverlays) this.drawObjectOverlay(overlay, viewport.zoom);
+  }
+
+  private drawActivity(samples: ActivitySample[], viewport: Viewport, ratio: number): void {
+    if (samples.length === 0) return;
+    this.heatCanvas.width = this.canvas.width;
+    this.heatCanvas.height = this.canvas.height;
+    const heat = this.heatCanvas.getContext('2d');
+    if (!heat) return;
+    heat.setTransform(ratio * viewport.zoom, 0, 0, ratio * viewport.zoom, ratio * viewport.x, ratio * viewport.y);
+    const maximum = Math.max(...samples.map(({ intensity }) => intensity));
+    for (const sample of samples) {
+      const gradient = heat.createRadialGradient(sample.x, sample.y, 0, sample.x, sample.y, 36);
+      const strength = maximum > 0 ? sample.intensity / maximum : 0;
+      gradient.addColorStop(0, `rgba(220, 74, 42, ${strength})`);
+      gradient.addColorStop(0.45, `rgba(236, 139, 48, ${strength * 0.72})`);
+      gradient.addColorStop(1, 'rgba(236, 139, 48, 0)');
+      heat.fillStyle = gradient;
+      heat.fillRect(sample.x - 36, sample.y - 36, 72, 72);
+    }
+    this.context.save();
+    this.context.setTransform(1, 0, 0, 1, 0, 0);
+    this.context.globalAlpha = 0.28;
+    this.context.drawImage(this.heatCanvas, 0, 0);
+    this.context.restore();
   }
 
   private drawObjectOverlay(overlay: ObjectOverlay, zoom: number): void {

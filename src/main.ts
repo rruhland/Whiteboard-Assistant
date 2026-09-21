@@ -186,6 +186,7 @@ function scheduleRender(): void {
       inkWidth: Number(widthInput.value),
       objectOverlays,
       selectedObjectStrokeIds: new Set(selectedObject?.strokeIds ?? []),
+      activitySamples: [],
     });
   });
 }
