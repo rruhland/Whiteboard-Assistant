@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'vitest';
 import {
   BoardModel,
+  createAddEvent,
+  createEraseEvent,
   type BoardDocument,
   type Point,
   type Stroke,
+  type StrokeAuthor,
 } from '../src/board';
-import { parseBoard, serializeBoard, type BoardDocumentV2 } from '../src/document';
+import { parseBoard, serializeBoard, type BoardDocumentV3 } from '../src/document';
 import {
   hitTestStroke,
   hitTestStrokesAlongSegment,
@@ -23,7 +26,37 @@ const point = (x: number, y: number, time = 1): Point => ({
 
 const viewport = { x: -20, y: 30, zoom: 2 };
 
+const stroke = (id: string, x: number, author: StrokeAuthor = 'user'): Stroke => ({
+  id,
+  createdAt: 1,
+  author,
+  color: '#000',
+  width: 2,
+  points: [point(x, 0)],
+});
+
 describe('BoardModel', () => {
+  test('replays assistant batch add as one undoable operation', () => {
+    const strokes = [stroke('assistant-1', 0, 'assistant'), stroke('assistant-2', 20, 'assistant')];
+    const model = new BoardModel({ events: [createAddEvent(strokes, 'assistant', { id: 'assistant-add', time: 10 })] });
+    expect(model.strokes.map(({ id }) => id)).toEqual(['assistant-1', 'assistant-2']);
+    model.undo();
+    expect(model.strokes).toEqual([]);
+    expect(model.events.at(-1)).toMatchObject({ kind: 'undo', targetId: 'assistant-add', changes: [{ after: null }, { after: null }] });
+    model.redo();
+    expect(model.strokes.map(({ id }) => id)).toEqual(['assistant-1', 'assistant-2']);
+  });
+
+  test('batch erase removes only supplied visible strokes and undoes together', () => {
+    const values = [stroke('one', 0), stroke('two', 20), stroke('three', 40)];
+    const add = createAddEvent(values, 'user', { id: 'add-all', time: 1 });
+    const erase = createEraseEvent(values.slice(0, 2), { id: 'erase-two', time: 2 });
+    const model = new BoardModel({ events: [add, erase] });
+    expect(model.strokes.map(({ id }) => id)).toEqual(['three']);
+    model.undo();
+    expect(model.strokes.map(({ id }) => id)).toEqual(['one', 'two', 'three']);
+  });
+
   test('records an add and move while preserving stroke identity and caller input', () => {
     const points = [point(-4, 3), point(5, 8, 2)];
     const model = new BoardModel();
@@ -89,10 +122,10 @@ describe('BoardModel', () => {
   test('round trips document data while preserving events, IDs, geometry, and viewport', () => {
     const model = new BoardModel();
     model.addStroke([point(-8, -2)], '#abc', 6);
-    const document: BoardDocumentV2 = { version: 2, events: model.events, associationEvents: [], viewport };
+    const document: BoardDocumentV3 = { version: 3, events: model.events, associationEvents: [], viewport };
     const restored = parseBoard(serializeBoard(document));
 
-    expect(restored).toEqual({ sourceVersion: 2, document });
+    expect(restored).toEqual({ sourceVersion: 3, document });
     expect(new BoardModel(restored.document).strokes).toEqual(model.strokes);
   });
 
@@ -112,7 +145,7 @@ describe('BoardModel', () => {
 
   test('rejects unsupported versions, nonfinite geometry, duplicate IDs, and invalid references', () => {
     const base: BoardDocument = { version: 1, events: [], viewport };
-    expect(() => parseBoard(JSON.stringify({ ...base, version: 3 }))).toThrow(/version/i);
+    expect(() => parseBoard(JSON.stringify({ ...base, version: 4 }))).toThrow(/version/i);
     expect(() => parseBoard(JSON.stringify({ ...base, viewport: { ...viewport, zoom: NaN } }))).toThrow(/finite|zoom/i);
 
     const duplicate: Stroke = {

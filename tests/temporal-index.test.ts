@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { buildTemporalIndex, projectHistory } from '../src/temporal';
-import { activeLabels, documentWithAddEraseUndo, documentWithMergeAndSplit, emptyDocument, fixtureDocument, positionOf } from './temporal-fixtures';
+import { activeLabels, annotationLifecycleFixture, documentWithAddEraseUndo, documentWithMergeAndSplit, emptyDocument, fixtureDocument, positionOf, version3AnnotationFixture } from './temporal-fixtures';
 
 describe('temporal index', () => {
   test('dependency-merges source logs and places ink first on equal timestamps', () => {
@@ -21,9 +21,22 @@ describe('temporal index', () => {
   test('rejects association events with unmet dependencies', () => {
     expect(() => buildTemporalIndex(fixtureDocument({ inkTimes: [], associationTimes: [1], associationStrokeIds: ['missing'] }))).toThrow(/unmet ink dependencies/);
   });
+
+  test('orders annotation creation after every assistant member stroke', () => {
+    const index = buildTemporalIndex(version3AnnotationFixture({ associationTime: 0, inkTime: 10 }));
+    expect(index.entries.findIndex(({ id }) => id === 'ink:assistant-add')).toBeLessThan(index.entries.findIndex(({ id }) => id === 'association:annotation-create'));
+  });
 });
 
 describe('historical projection', () => {
+  test('annotation history reconstructs approval, partial erase, batch delete, and undo', () => {
+    const { document, index, positions } = annotationLifecycleFixture();
+    const assistantCount = (position: number) => projectHistory(document, index, position).board.strokes.filter(({ author }) => author === 'assistant').length;
+    expect(assistantCount(positions.approved)).toBe(3);
+    expect(assistantCount(positions.partialErase)).toBe(2);
+    expect(assistantCount(positions.deleted)).toBe(0);
+    expect(assistantCount(positions.undoDelete)).toBe(2);
+  });
   test('projects start, erased, and restored states without mutating the document', () => {
     const document = documentWithAddEraseUndo();
     const original = structuredClone(document);

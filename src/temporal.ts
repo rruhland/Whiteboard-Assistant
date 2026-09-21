@@ -1,6 +1,6 @@
 import { AssociationModel, type AssociationEvent, type AssociationEventKind, type Bounds, type WorkObject } from './association';
 import { BoardModel, type BoardEvent, type BoardEventKind, type Stroke } from './board';
-import type { BoardDocumentV2 } from './document';
+import type { BoardDocumentV3 } from './document';
 
 export type TimelineSource = 'ink' | 'association';
 export type TimelineEntry = {
@@ -61,6 +61,7 @@ export type TemporalObjectResult = {
   memberStrokeIds: string[];
   objects?: WorkObject[];
   strokes?: Stroke[];
+  linkedAnnotationIds?: string[];
 };
 export type TemporalRegionResult = {
   bounds: Bounds;
@@ -83,7 +84,7 @@ function strokeIds(event: BoardEvent | AssociationEvent): string[] {
   });
 }
 
-export function buildTemporalIndex(document: BoardDocumentV2): TemporalIndex {
+export function buildTemporalIndex(document: BoardDocumentV3): TemporalIndex {
   const entries: TimelineEntry[] = [];
   const seenStrokes = new Set<string>();
   let inkEventCount = 0;
@@ -142,7 +143,7 @@ export function buildTemporalIndex(document: BoardDocumentV2): TemporalIndex {
   return { entries, segments, totalInkEvents: document.events.length, totalAssociationEvents: document.associationEvents.length };
 }
 
-export function projectHistory(document: BoardDocumentV2, index: TemporalIndex, position: number): HistoricalProjection {
+export function projectHistory(document: BoardDocumentV3, index: TemporalIndex, position: number): HistoricalProjection {
   if (!Number.isInteger(position) || position < 0 || position > index.entries.length) {
     throw new Error(`History position must be an integer from 0 to ${index.entries.length}`);
   }
@@ -169,11 +170,11 @@ function validatePosition(index: TemporalIndex, position: number, label = 'posit
   }
 }
 
-function inkEvent(document: BoardDocumentV2, entry: TimelineEntry): BoardEvent | undefined {
+function inkEvent(document: BoardDocumentV3, entry: TimelineEntry): BoardEvent | undefined {
   return entry.source === 'ink' ? document.events[entry.inkEventCount - 1] : undefined;
 }
 
-function associationEvent(document: BoardDocumentV2, entry: TimelineEntry): AssociationEvent | undefined {
+function associationEvent(document: BoardDocumentV3, entry: TimelineEntry): AssociationEvent | undefined {
   return entry.source === 'association' ? document.associationEvents[entry.associationEventCount - 1] : undefined;
 }
 
@@ -185,7 +186,7 @@ function cloneEntries(entries: TimelineEntry[]): TimelineEntry[] {
   return structuredClone(entries);
 }
 
-export function getCurrentContext(document: BoardDocumentV2, index: TemporalIndex, sincePosition?: number): CurrentContext {
+export function getCurrentContext(document: BoardDocumentV3, index: TemporalIndex, sincePosition?: number): CurrentContext {
   const position = index.entries.length;
   if (sincePosition !== undefined) validatePosition(index, sincePosition, 'sincePosition');
   const projection = projectHistory(document, index, position);
@@ -205,7 +206,7 @@ export function getCurrentContext(document: BoardDocumentV2, index: TemporalInde
 }
 
 export function queryChanges(
-  document: BoardDocumentV2,
+  document: BoardDocumentV3,
   index: TemporalIndex,
   fromPosition: number,
   toPosition: number,
@@ -243,10 +244,10 @@ export function queryChanges(
 }
 
 export function queryObjectHistory(
-  document: BoardDocumentV2,
+  document: BoardDocumentV3,
   index: TemporalIndex,
   objectId: string,
-  options: { throughPosition?: number; detail?: TemporalDetail } = {},
+  options: { throughPosition?: number; detail?: TemporalDetail; includeAnnotationLinks?: boolean } = {},
 ): TemporalObjectResult {
   const throughPosition = options.throughPosition ?? index.entries.length;
   validatePosition(index, throughPosition, 'throughPosition');
@@ -259,7 +260,7 @@ export function queryObjectHistory(
       if (after) objects.set(after.id, structuredClone(after));
     });
   }
-  if (!objects.has(objectId)) return { objectId, throughPosition, entries: [], lineageObjectIds: [], memberStrokeIds: [] };
+  if (!objects.has(objectId)) return { objectId, throughPosition, entries: [], lineageObjectIds: [], memberStrokeIds: [], ...(options.includeAnnotationLinks ? { linkedAnnotationIds: [] } : {}) };
   const lineage = new Set([objectId]);
   let changed = true;
   while (changed) {
@@ -271,7 +272,9 @@ export function queryObjectHistory(
       }
     }
   }
-  const entries = prefix.filter((entry) => associationEvent(document, entry)?.changes.some(({ before, after }) => lineage.has((after ?? before)?.id ?? '')));
+  const linkedAnnotationIds = uniqueSorted([...objects.values()].filter((object) => object.objectType === 'annotation' && object.links.some(({ targetObjectId }) => lineage.has(targetObjectId))).map(({ id }) => id));
+  const entryObjectIds = new Set([...lineage, ...(options.includeAnnotationLinks ? linkedAnnotationIds : [])]);
+  const entries = prefix.filter((entry) => associationEvent(document, entry)?.changes.some(({ before, after }) => entryObjectIds.has((after ?? before)?.id ?? '')));
   const selectedObjects = [...objects.values()].filter(({ id }) => lineage.has(id));
   const memberStrokeIds = uniqueSorted(selectedObjects.flatMap(({ strokeIds }) => strokeIds));
   const strokeSnapshots = new Map<string, Stroke>();
@@ -285,6 +288,7 @@ export function queryObjectHistory(
     entries: cloneEntries(entries),
     lineageObjectIds: uniqueSorted(lineage),
     memberStrokeIds,
+    ...(options.includeAnnotationLinks ? { linkedAnnotationIds } : {}),
     ...(options.detail === 'geometry' ? { objects: structuredClone(selectedObjects), strokes: [...strokeSnapshots.values()] } : {}),
   };
 }
@@ -304,7 +308,7 @@ function intersects(stroke: Stroke, bounds: Bounds): boolean {
 }
 
 export function queryRegionHistory(
-  document: BoardDocumentV2,
+  document: BoardDocumentV3,
   index: TemporalIndex,
   bounds: Bounds,
   options: { throughPosition?: number; detail?: TemporalDetail; includeErased?: boolean } = {},
@@ -365,7 +369,7 @@ function sampleStroke(stroke: Stroke, intensity: number): ActivitySample[] {
   return samples;
 }
 
-export function buildActivitySamples(document: BoardDocumentV2, index: TemporalIndex, position: number): ActivitySample[] {
+export function buildActivitySamples(document: BoardDocumentV3, index: TemporalIndex, position: number): ActivitySample[] {
   validatePosition(index, position);
   if (position === 0) return [];
   const selected = index.entries[position - 1];

@@ -50,6 +50,7 @@
         </div>
 
         <div class="tool-group file-actions" role="group" aria-label="Board file">
+          <button id="assistant-toggle" class="text-button" aria-expanded="false" aria-controls="assistant-panel">Assistant suggestions</button>
           <button id="objects-toggle" class="text-button" aria-expanded="false" aria-controls="object-panel">Objects</button>
           <button id="history-toggle" class="text-button" aria-expanded="false" aria-controls="timeline-panel">History</button>
           <button id="open-board" class="text-button" title="Open a board JSON file">Open</button>
@@ -73,6 +74,8 @@
         </div>
         <button id="object-panel-backdrop" class="panel-backdrop" aria-label="Close objects panel" hidden></button>
         <aside id="object-panel" class="object-panel" aria-label="Work objects" hidden></aside>
+        <button id="assistant-panel-backdrop" class="panel-backdrop" aria-label="Close assistant suggestions" hidden></button>
+        <aside id="assistant-panel" class="assistant-panel" aria-label="Assistant suggestions" hidden></aside>
       </main>
 
       <aside id="timeline-panel" class="timeline-panel" aria-label="Board history" hidden></aside>

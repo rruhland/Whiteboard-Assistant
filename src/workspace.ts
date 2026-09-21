@@ -1,13 +1,13 @@
 import { AssociationModel, migrateVersion1 } from './association';
 import { BoardModel, type Point, type Viewport } from './board';
-import { composeBoardDocument, type BoardDocumentV2, type ParsedBoard } from './document';
+import { composeBoardDocument, type BoardDocumentV3, type ParsedBoard } from './document';
 import { buildTemporalIndex, projectHistory, type HistoricalProjection, type TemporalIndex } from './temporal';
 
 export type WorkspaceState = {
   board: BoardModel;
   associations: AssociationModel;
   viewport: Viewport;
-  migratedFromVersion1: boolean;
+  migratedFromVersion: 1 | 2 | null;
 };
 export type HistorySession = {
   index: TemporalIndex;
@@ -32,7 +32,7 @@ export function loadWorkspace(parsed: ParsedBoard): WorkspaceState {
     board,
     associations,
     viewport: { ...parsed.document.viewport },
-    migratedFromVersion1: parsed.sourceVersion === 1,
+    migratedFromVersion: parsed.sourceVersion === 3 ? null : parsed.sourceVersion,
   };
 }
 
@@ -52,7 +52,7 @@ export function commitStroke(
   }
 }
 
-export function workspaceDocument(state: WorkspaceState): BoardDocumentV2 {
+export function workspaceDocument(state: WorkspaceState): BoardDocumentV3 {
   return composeBoardDocument(state.board, state.associations, state.viewport);
 }
 

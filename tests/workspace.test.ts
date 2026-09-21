@@ -45,7 +45,7 @@ describe('workspace coordination', () => {
     board.addStroke([point(2, 2)], '#000', 3);
     const document = board.toDocument({ x: 4, y: 5, zoom: 2 });
     const loaded = loadWorkspace({ sourceVersion: 1, document });
-    expect(loaded.migratedFromVersion1).toBe(true);
+    expect(loaded.migratedFromVersion).toBe(1);
     expect(loaded.associations.objects[0].strokeIds).toEqual([board.strokes[0].id]);
     expect(loaded.viewport).toEqual(document.viewport);
   });

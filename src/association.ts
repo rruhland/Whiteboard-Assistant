@@ -1,6 +1,6 @@
 import type { Stroke } from './board';
 
-export type WorkObject = {
+export type WorkObjectBase = {
   id: string;
   label: string;
   strokeIds: string[];
@@ -10,7 +10,20 @@ export type WorkObject = {
   parentIds: string[];
 };
 
-export type AssociationEventKind = 'auto-create' | 'auto-append' | 'manual-assign' | 'manual-merge' | 'manual-split';
+export type ContentObject = WorkObjectBase & { objectType: 'content' };
+export type GraphLink = { type: 'annotates' | 'points-to'; targetObjectId: string };
+export type AnnotationObject = WorkObjectBase & {
+  objectType: 'annotation';
+  annotationKind: 'circle' | 'arrow';
+  links: GraphLink[];
+  proposalId: string;
+  contextPosition: number;
+  createdBy: 'assistant';
+  approvedAt: number;
+};
+export type WorkObject = ContentObject | AnnotationObject;
+
+export type AssociationEventKind = 'auto-create' | 'auto-append' | 'manual-assign' | 'manual-merge' | 'manual-split' | 'assistant-annotation';
 
 export type ObjectChange = {
   before: WorkObject | null;
@@ -28,7 +41,7 @@ export type AssociationEvent = {
 
 export type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 export type GraphNode = WorkObject & { bounds?: Bounds; visibleStrokeCount: number };
-export type GraphEdge = { type: 'near' | 'derived-from'; sourceId: string; targetId: string };
+export type GraphEdge = { type: 'near' | 'derived-from' | 'annotates' | 'points-to'; sourceId: string; targetId: string };
 
 const CLOSE_DISTANCE = 24;
 const RECENT_DISTANCE = 80;
@@ -107,6 +120,19 @@ function assertObject(object: WorkObject, knownStrokeIds: ReadonlySet<string>, l
   if (new Set(object.strokeIds).size !== object.strokeIds.length) throw new Error(`${label} has duplicate stroke IDs`);
   if (new Set(object.parentIds).size !== object.parentIds.length) throw new Error(`${label} has duplicate parent IDs`);
   for (const strokeId of object.strokeIds) if (!knownStrokeIds.has(strokeId)) throw new Error(`${label} references unknown stroke ${strokeId}`);
+  if (object.objectType === 'content') {
+    for (const field of ['annotationKind', 'links', 'proposalId', 'contextPosition', 'createdBy', 'approvedAt']) {
+      if (field in object) throw new Error(`${label} content object contains annotation field ${field}`);
+    }
+    return;
+  }
+  if (object.objectType !== 'annotation') throw new Error(`${label} objectType is unsupported`);
+  if (object.strokeIds.length === 0) throw new Error(`${label} annotation requires member strokes`);
+  if (object.annotationKind !== 'circle' && object.annotationKind !== 'arrow') throw new Error(`${label} annotation kind is unsupported`);
+  if (object.links.length !== 1 || !['annotates', 'points-to'].includes(object.links[0]?.type) || !object.links[0]?.targetObjectId) throw new Error(`${label} annotation requires one valid target link`);
+  if (!object.proposalId || !Number.isInteger(object.contextPosition) || object.contextPosition < 0 || object.createdBy !== 'assistant' || !Number.isFinite(object.approvedAt)) {
+    throw new Error(`${label} annotation provenance is invalid`);
+  }
 }
 
 function validateLineage(objects: Map<string, WorkObject>): void {
@@ -133,7 +159,7 @@ function sameMembers(left: readonly string[], right: readonly string[]): boolean
 }
 
 function assertNewObject(change: ObjectChange, event: AssociationEvent): WorkObject {
-  if (change.before !== null || !change.after || change.after.status !== 'active' || change.after.parentIds.length !== 0 || change.after.strokeIds.length !== 1) {
+  if (change.before !== null || !change.after || change.after.objectType !== 'content' || change.after.status !== 'active' || change.after.parentIds.length !== 0 || change.after.strokeIds.length !== 1) {
     throw new Error(`${event.kind} event ${event.id} must create one active single-stroke object`);
   }
   if (change.after.createdAt !== event.time || change.after.lastAssociatedAt !== event.time) {
@@ -144,14 +170,23 @@ function assertNewObject(change: ObjectChange, event: AssociationEvent): WorkObj
 
 function assertAppend(change: ObjectChange, event: AssociationEvent): void {
   const { before, after } = change;
-  if (!before || !after || before.status !== 'active' || after.status !== 'active' || after.strokeIds.length !== before.strokeIds.length + 1) {
+  if (!before || !after || before.objectType !== 'content' || after.objectType !== 'content' || before.status !== 'active' || after.status !== 'active' || after.strokeIds.length !== before.strokeIds.length + 1) {
     throw new Error(`${event.kind} event ${event.id} must append one stroke to an active object`);
   }
   const expected = { ...clone(before), strokeIds: [...before.strokeIds, after.strokeIds.at(-1) as string], lastAssociatedAt: event.time };
   if (!same(after, expected)) throw new Error(`${event.kind} event ${event.id} changes fields other than membership and activity time`);
 }
 
-function validateEventSemantics(event: AssociationEvent): void {
+function validateEventSemantics(event: AssociationEvent, objects: ReadonlyMap<string, WorkObject>): void {
+  if (event.kind === 'assistant-annotation') {
+    const change = event.changes[0];
+    if (event.actor !== 'user' || event.changes.length !== 1 || change.before !== null || change.after?.objectType !== 'annotation') {
+      throw new Error(`assistant-annotation event ${event.id} requires one user-approved annotation creation`);
+    }
+    const target = objects.get(change.after.links[0].targetObjectId);
+    if (!target || target.objectType !== 'content' || target.status !== 'active') throw new Error(`assistant-annotation event ${event.id} target must be an active content object`);
+    return;
+  }
   if (event.kind === 'auto-create') {
     if (event.actor !== 'system' || event.changes.length !== 1) throw new Error(`auto-create event ${event.id} requires one system change`);
     assertNewObject(event.changes[0], event);
@@ -173,7 +208,7 @@ function validateEventSemantics(event: AssociationEvent): void {
   const creations = event.changes.filter((change): change is { before: null; after: WorkObject } => change.before === null && change.after !== null);
   if (updates.length + creations.length !== event.changes.length) throw new Error(`${event.kind} event ${event.id} cannot delete objects`);
   for (const { before, after } of updates) {
-    if (before.status !== 'active' || !same(after, { ...clone(before), status: 'superseded' })) {
+    if (before.objectType !== 'content' || after.objectType !== 'content' || before.status !== 'active' || !same(after, { ...clone(before), status: 'superseded' })) {
       throw new Error(`${event.kind} event ${event.id} must supersede its active parent objects`);
     }
   }
@@ -182,7 +217,7 @@ function validateEventSemantics(event: AssociationEvent): void {
     const child = creations[0].after;
     const parentIds = updates.map(({ before }) => before.id).sort();
     const memberIds = [...new Set(updates.flatMap(({ before }) => before.strokeIds))];
-    if (child.status !== 'active' || !same(child.parentIds, parentIds) || !sameMembers(child.strokeIds, memberIds) || child.createdAt !== event.time || child.lastAssociatedAt !== event.time) {
+    if (child.objectType !== 'content' || child.status !== 'active' || !same(child.parentIds, parentIds) || !sameMembers(child.strokeIds, memberIds) || child.createdAt !== event.time || child.lastAssociatedAt !== event.time) {
       throw new Error(`manual-merge event ${event.id} has invalid child lineage or membership`);
     }
     return;
@@ -190,7 +225,7 @@ function validateEventSemantics(event: AssociationEvent): void {
   if (updates.length !== 1 || creations.length !== 2) throw new Error(`manual-split event ${event.id} requires one parent and two children`);
   const parent = updates[0].before;
   const childMembers = creations.flatMap(({ after }) => after.strokeIds);
-  if (creations.some(({ after }) => after.status !== 'active' || !same(after.parentIds, [parent.id]) || after.strokeIds.length === 0 || after.createdAt !== event.time || after.lastAssociatedAt !== event.time)
+  if (parent.objectType !== 'content' || creations.some(({ after }) => after.objectType !== 'content' || after.status !== 'active' || !same(after.parentIds, [parent.id]) || after.strokeIds.length === 0 || after.createdAt !== event.time || after.lastAssociatedAt !== event.time)
     || !sameMembers(childMembers, parent.strokeIds)) {
     throw new Error(`manual-split event ${event.id} has invalid child lineage or membership`);
   }
@@ -203,7 +238,7 @@ function replay(events: readonly AssociationEvent[], knownStrokeIds: ReadonlySet
   events.forEach((event, eventIndex) => {
     if (!event.id || eventIds.has(event.id)) throw new Error(`Duplicate association event ID ${event.id}`);
     if (!Number.isFinite(event.time) || (event.actor !== 'system' && event.actor !== 'user')) throw new Error(`Invalid association event ${event.id}`);
-    if (!['auto-create', 'auto-append', 'manual-assign', 'manual-merge', 'manual-split'].includes(event.kind)) throw new Error(`Unsupported association event kind at ${eventIndex}`);
+    if (!['auto-create', 'auto-append', 'manual-assign', 'manual-merge', 'manual-split', 'assistant-annotation'].includes(event.kind)) throw new Error(`Unsupported association event kind at ${eventIndex}`);
     if (!Array.isArray(event.changes) || event.changes.length === 0) throw new Error(`Association event ${event.id} must contain changes`);
     const changedIds = new Set<string>();
     for (const [changeIndex, change] of event.changes.entries()) {
@@ -220,7 +255,7 @@ function replay(events: readonly AssociationEvent[], knownStrokeIds: ReadonlySet
         throw new Error(`Association event ${event.id} has wrong before state for ${id}`);
       }
     }
-    validateEventSemantics(event);
+    validateEventSemantics(event, objects);
     for (const change of event.changes) {
       const id = change.after?.id ?? change.before?.id as string;
       if (change.after) {
@@ -246,7 +281,7 @@ function replay(events: readonly AssociationEvent[], knownStrokeIds: ReadonlySet
 function proposedObject(stroke: Stroke, objects: readonly WorkObject[], visible: readonly Stroke[]): WorkObject | undefined {
   const bounds = strokeBounds(stroke);
   return objects
-    .filter(({ status }) => status === 'active')
+    .filter((object) => object.objectType === 'content' && object.status === 'active')
     .map((object) => ({ object, objectBounds: getObjectBounds(object, visible) }))
     .filter((candidate): candidate is { object: WorkObject; objectBounds: Bounds } => candidate.objectBounds !== undefined)
     .map(({ object, objectBounds }) => ({ object, distance: boundsDistance(bounds, objectBounds) }))
@@ -290,7 +325,7 @@ export class AssociationModel {
     const time = Date.now();
     if (!objectId) return this.createObject(strokeId, time, 'user', 'manual-assign', 'Assigned to a new object');
     const before = this.objectMap.get(objectId);
-    if (!before || before.status !== 'active') throw new Error(`Object ${objectId} is not active`);
+    if (!before || before.objectType !== 'content' || before.status !== 'active') throw new Error(`Object ${objectId} is not an active content object`);
     const after = clone(before);
     after.strokeIds.push(strokeId);
     after.lastAssociatedAt = time;
@@ -302,10 +337,11 @@ export class AssociationModel {
     const uniqueIds = [...new Set(objectIds)];
     if (uniqueIds.length < 2) throw new Error('Merge requires at least two distinct active objects');
     const parents = uniqueIds.map((id) => this.objectMap.get(id));
-    if (parents.some((object) => !object || object.status !== 'active')) throw new Error('Merge requires active objects');
-    const activeParents = parents as WorkObject[];
+    if (parents.some((object) => !object || object.objectType !== 'content' || object.status !== 'active')) throw new Error('Merge requires active content objects');
+    const activeParents = parents as ContentObject[];
     const time = Date.now();
-    const child: WorkObject = {
+    const child: ContentObject = {
+      objectType: 'content',
       id: idFor('work'), label: labelFor(this.creationCount),
       strokeIds: [...new Set(activeParents.flatMap(({ strokeIds }) => strokeIds))],
       createdAt: time, lastAssociatedAt: time, status: 'active', parentIds: [...uniqueIds].sort(),
@@ -318,11 +354,12 @@ export class AssociationModel {
 
   splitObject(objectId: string, selectedStrokeId: string): readonly [string, string] {
     const parent = this.objectMap.get(objectId);
-    if (!parent || parent.status !== 'active') throw new Error(`Object ${objectId} is not active`);
+    if (!parent || parent.objectType !== 'content' || parent.status !== 'active') throw new Error(`Object ${objectId} is not an active content object`);
     if (parent.strokeIds.length < 2) throw new Error('Split requires at least two member strokes');
     if (!parent.strokeIds.includes(selectedStrokeId)) throw new Error(`Stroke ${selectedStrokeId} is not a member of ${objectId}`);
     const time = Date.now();
-    const makeChild = (strokeIds: string[], offset: number): WorkObject => ({
+    const makeChild = (strokeIds: string[], offset: number): ContentObject => ({
+      objectType: 'content',
       id: idFor('work'), label: labelFor(this.creationCount + offset), strokeIds,
       createdAt: time, lastAssociatedAt: time, status: 'active', parentIds: [parent.id],
     });
@@ -339,7 +376,8 @@ export class AssociationModel {
   }
 
   private createObject(strokeId: string, time: number, actor: 'system' | 'user', kind: 'auto-create' | 'manual-assign', reason: string, ids?: { object: string; event: string }): string {
-    const object: WorkObject = {
+    const object: ContentObject = {
+      objectType: 'content',
       id: ids?.object ?? idFor('work'), label: labelFor(this.creationCount), strokeIds: [strokeId],
       createdAt: time, lastAssociatedAt: time, status: 'active', parentIds: [],
     };
@@ -373,7 +411,7 @@ export function migrateVersion1(strokes: readonly Stroke[], knownStrokeIds: Read
       after.lastAssociatedAt = stroke.createdAt;
       model = new AssociationModel([...model.events, { id: eventId, time: stroke.createdAt, actor: 'system', kind: 'auto-append', reason: 'Migrated from version 1', changes: [{ before: target, after }] }], knownStrokeIds);
     } else {
-      const object: WorkObject = { id: `work-v1-${stroke.id}`, label: labelFor(model.objects.length), strokeIds: [stroke.id], createdAt: stroke.createdAt, lastAssociatedAt: stroke.createdAt, status: 'active', parentIds: [] };
+      const object: ContentObject = { objectType: 'content', id: `work-v1-${stroke.id}`, label: labelFor(model.objects.length), strokeIds: [stroke.id], createdAt: stroke.createdAt, lastAssociatedAt: stroke.createdAt, status: 'active', parentIds: [] };
       model = new AssociationModel([...model.events, { id: eventId, time: stroke.createdAt, actor: 'system', kind: 'auto-create', reason: 'Migrated from version 1', changes: [{ before: null, after: object }] }], knownStrokeIds);
     }
   }
@@ -388,7 +426,10 @@ export function projectGraph(model: AssociationModel, visible: readonly Stroke[]
   });
   const edges: GraphEdge[] = [];
   for (const node of nodes) for (const parentId of node.parentIds) edges.push({ type: 'derived-from', sourceId: node.id, targetId: parentId });
-  const active = nodes.filter((node) => node.status === 'active' && node.bounds);
+  for (const node of nodes) if (node.objectType === 'annotation') {
+    for (const link of node.links) edges.push({ type: link.type, sourceId: node.id, targetId: link.targetObjectId });
+  }
+  const active = nodes.filter((node) => node.objectType === 'content' && node.status === 'active' && node.bounds);
   for (let leftIndex = 0; leftIndex < active.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < active.length; rightIndex += 1) {
       const left = active[leftIndex];

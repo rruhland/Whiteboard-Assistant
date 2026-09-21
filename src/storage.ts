@@ -1,4 +1,4 @@
-import { parseBoard, serializeBoard, type BoardDocumentV2, type ParsedBoard } from './document';
+import { parseBoard, serializeBoard, type BoardDocumentV3, type ParsedBoard } from './document';
 
 export const AUTOSAVE_KEY = 'whiteboard-assistant.board.v1';
 
@@ -8,7 +8,7 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function saveAutosave(storage: StorageLike, document: BoardDocumentV2): { ok: true } | { ok: false; error: string } {
+export function saveAutosave(storage: StorageLike, document: BoardDocumentV3): { ok: true } | { ok: false; error: string } {
   try {
     storage.setItem(AUTOSAVE_KEY, serializeBoard(document));
     return { ok: true };
@@ -45,7 +45,8 @@ export function openPortableBoard(
   const opened = readPortableBoard(json, current);
   if (!opened.replaced) return opened;
   if (!storage) return { ...opened, error: 'Not saved: local storage is unavailable' };
-  if (opened.document.sourceVersion !== 2) return opened;
-  const saved = saveAutosave(storage, opened.document.document);
+  const stateDocument = opened.document.sourceVersion === 3 ? opened.document.document : null;
+  if (!stateDocument) return opened;
+  const saved = saveAutosave(storage, stateDocument);
   return saved.ok ? opened : { ...opened, error: saved.error };
 }

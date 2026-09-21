@@ -11,16 +11,20 @@ export type Viewport = {
   zoom: number;
 };
 
+export type StrokeAuthor = 'user' | 'assistant';
+
 export type Stroke = {
   id: string;
   createdAt: number;
-  author: 'user';
+  author: StrokeAuthor;
   color: string;
   width: number;
   points: Point[];
 };
 
 export type BoardEventKind = 'add' | 'move' | 'erase' | 'undo' | 'redo';
+export type BoardActor = 'user' | 'assistant';
+export type EventIdentity = { id: string; time: number };
 
 export type StrokeChange = {
   before: Stroke | null;
@@ -30,7 +34,7 @@ export type StrokeChange = {
 export type BoardEvent = {
   id: string;
   time: number;
-  actor: 'user';
+  actor: BoardActor;
   kind: BoardEventKind;
   changes: StrokeChange[];
   targetId?: string;
@@ -101,7 +105,7 @@ function assertStroke(value: unknown, label: string): asserts value is Stroke {
   if (!isRecord(value)) throw new Error(`${label} must be an object`);
   if (typeof value.id !== 'string' || value.id.length === 0) throw new Error(`${label}.id must be a non-empty string`);
   assertFinite(value.createdAt, `${label}.createdAt`);
-  if (value.author !== 'user') throw new Error(`${label}.author must be user`);
+  if (value.author !== 'user' && value.author !== 'assistant') throw new Error(`${label}.author is unsupported`);
   if (typeof value.color !== 'string' || value.color.length === 0) throw new Error(`${label}.color must be a non-empty string`);
   assertFinite(value.width, `${label}.width`);
   if (value.width <= 0) throw new Error(`${label}.width must be positive`);
@@ -165,7 +169,7 @@ function assertEventShape(value: unknown, label: string): asserts value is Board
   if (!isRecord(value)) throw new Error(`${label} must be an object`);
   if (typeof value.id !== 'string' || value.id.length === 0) throw new Error(`${label}.id must be a non-empty string`);
   assertFinite(value.time, `${label}.time`);
-  if (value.actor !== 'user') throw new Error(`${label}.actor must be user`);
+  if (value.actor !== 'user' && value.actor !== 'assistant') throw new Error(`${label}.actor is unsupported`);
   if (!['add', 'move', 'erase', 'undo', 'redo'].includes(value.kind as string)) throw new Error(`${label}.kind is unsupported`);
   if (!Array.isArray(value.changes) || value.changes.length === 0) throw new Error(`${label}.changes must not be empty`);
   value.changes.forEach((change, index) => assertChange(change, `${label}.changes[${index}]`));
@@ -227,21 +231,23 @@ function replay(document: BoardDocument): ReplayState {
     if (state.eventById.has(event.id)) throw new Error(`Duplicate event ID ${event.id}`);
     const cloned = cloneEvent(event);
     if (cloned.kind === 'add') {
-      if (cloned.changes.length !== 1 || cloned.changes[0].before !== null || cloned.changes[0].after === null) throw new Error(`Event ${cloned.id} is not a valid add`);
+      if (cloned.changes.some(({ before, after }) => before !== null || after === null)) throw new Error(`Event ${cloned.id} is not a valid add`);
+      if (cloned.changes.some(({ after }) => after?.author !== cloned.actor)) throw new Error(`Event ${cloned.id} add provenance does not match its actor`);
       applyChanges(state, cloned);
       state.undoStack.push(cloned);
       state.redoStack = [];
     } else if (cloned.kind === 'move') {
-      if (cloned.changes.length !== 1 || !cloned.changes[0].before || !cloned.changes[0].after) throw new Error(`Event ${cloned.id} is not a valid move`);
+      if (cloned.actor !== 'user' || cloned.changes.length !== 1 || !cloned.changes[0].before || !cloned.changes[0].after) throw new Error(`Event ${cloned.id} is not a valid move`);
       applyChanges(state, cloned);
       state.undoStack.push(cloned);
       state.redoStack = [];
     } else if (cloned.kind === 'erase') {
-      if (cloned.changes.length !== 1 || !cloned.changes[0].before || cloned.changes[0].after !== null) throw new Error(`Event ${cloned.id} is not a valid erase`);
+      if (cloned.actor !== 'user' || cloned.changes.some(({ before, after }) => before === null || after !== null)) throw new Error(`Event ${cloned.id} is not a valid erase`);
       applyChanges(state, cloned);
       state.undoStack.push(cloned);
       state.redoStack = [];
     } else if (cloned.kind === 'undo') {
+      if (cloned.actor !== 'user') throw new Error(`Undo event ${cloned.id} must be user-authored`);
       if (!cloned.targetId) throw new Error(`Undo event ${cloned.id} requires a target reference`);
       const target = state.eventById.get(cloned.targetId);
       if (!target || !['add', 'move', 'erase'].includes(target.kind) || state.undoStack.at(-1)?.id !== target.id) throw new Error(`Undo event ${cloned.id} has an invalid target reference`);
@@ -250,6 +256,7 @@ function replay(document: BoardDocument): ReplayState {
       state.undoStack.pop();
       state.redoStack.push(target);
     } else {
+      if (cloned.actor !== 'user') throw new Error(`Redo event ${cloned.id} must be user-authored`);
       if (!cloned.targetId) throw new Error(`Redo event ${cloned.id} requires a target reference`);
       const target = state.eventById.get(cloned.targetId);
       if (!target || !['add', 'move', 'erase'].includes(target.kind) || state.redoStack.at(-1)?.id !== target.id) throw new Error(`Redo event ${cloned.id} has an invalid target reference`);
@@ -390,3 +397,23 @@ export class BoardModel {
 }
 
 export const BOARD_ZOOM_LIMITS = { min: MIN_ZOOM, max: MAX_ZOOM } as const;
+
+export function createAddEvent(strokes: readonly Stroke[], actor: BoardActor, identity: EventIdentity): BoardEvent {
+  return {
+    id: identity.id,
+    time: identity.time,
+    actor,
+    kind: 'add',
+    changes: strokes.map((stroke) => ({ before: null, after: cloneStroke(stroke) })),
+  };
+}
+
+export function createEraseEvent(strokes: readonly Stroke[], identity: EventIdentity): BoardEvent {
+  return {
+    id: identity.id,
+    time: identity.time,
+    actor: 'user',
+    kind: 'erase',
+    changes: strokes.map((stroke) => ({ before: cloneStroke(stroke), after: null })),
+  };
+}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { getCurrentContext, queryChanges, queryObjectHistory, queryRegionHistory } from '../src/temporal';
-import { objectRegionFixture, segmentedFixture } from './temporal-fixtures';
+import { annotationLifecycleFixture, objectRegionFixture, segmentedFixture, version3AnnotationFixture } from './temporal-fixtures';
+import { buildTemporalIndex } from '../src/temporal';
 
 describe('temporal queries', () => {
   test('current context stays in the current segment and honors sincePosition', () => {
@@ -42,6 +43,20 @@ describe('temporal queries', () => {
   test('unknown object returns an empty result with the requested ID', () => {
     const fixture = objectRegionFixture();
     expect(queryObjectHistory(fixture.document, fixture.index, 'missing')).toEqual({ objectId: 'missing', throughPosition: fixture.index.entries.length, entries: [], lineageObjectIds: [], memberStrokeIds: [] });
+  });
+
+  test('ordinary region queries do not expose erased assistant IDs, entries, or geometry', () => {
+    const fixture = annotationLifecycleFixture();
+    const withoutUndo = { ...fixture.document, events: fixture.document.events.filter(({ id }) => id !== 'undo-delete') };
+    const index = buildTemporalIndex(withoutUndo);
+    expect(queryRegionHistory(withoutUndo, index, { minX: 70, minY: -10, maxX: 150, maxY: 20 })).toMatchObject({ entries: [], strokeIds: [], erasedStrokeIds: [] });
+  });
+
+  test('object history follows annotation links only when explicitly requested', () => {
+    const document = version3AnnotationFixture();
+    const index = buildTemporalIndex(document);
+    expect(queryObjectHistory(document, index, 'target').entries.map(({ eventId }) => eventId)).not.toContain('annotation-create');
+    expect(queryObjectHistory(document, index, 'target', { includeAnnotationLinks: true })).toMatchObject({ linkedAnnotationIds: ['annotation'] });
   });
 
   test('returned geometry and entries are defensive', () => {
