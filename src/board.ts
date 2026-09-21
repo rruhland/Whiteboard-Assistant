@@ -237,7 +237,7 @@ function replay(document: BoardDocument): ReplayState {
       state.undoStack.push(cloned);
       state.redoStack = [];
     } else if (cloned.kind === 'move') {
-      if (cloned.actor !== 'user' || cloned.changes.length !== 1 || !cloned.changes[0].before || !cloned.changes[0].after) throw new Error(`Event ${cloned.id} is not a valid move`);
+      if (cloned.actor !== 'user' || cloned.changes.some(({ before, after }) => !before || !after)) throw new Error(`Event ${cloned.id} is not a valid move`);
       applyChanges(state, cloned);
       state.undoStack.push(cloned);
       state.redoStack = [];
@@ -340,13 +340,28 @@ export class BoardModel {
     if (!before) return;
     const after = cloneStroke(before);
     after.points = after.points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
-    this.commit({ id: idFor('event'), time: Date.now(), actor: 'user', kind: 'move', changes: [{ before, after }] });
+    this.updateStrokes([after]);
+  }
+
+  updateStrokes(after: readonly Stroke[]): void {
+    const unique = new Map(after.map((stroke) => [stroke.id, cloneStroke(stroke)]));
+    const changes = [...unique.values()].flatMap((next) => {
+      const before = this.strokeMap.get(next.id);
+      return before ? [{ before: cloneStroke(before), after: next }] : [];
+    });
+    if (changes.length) this.commit({ id: idFor('event'), time: Date.now(), actor: 'user', kind: 'move', changes });
   }
 
   eraseStroke(id: string): void {
-    const before = this.strokeMap.get(id);
-    if (!before) return;
-    this.commit({ id: idFor('event'), time: Date.now(), actor: 'user', kind: 'erase', changes: [{ before, after: null }] });
+    this.eraseStrokes([id]);
+  }
+
+  eraseStrokes(ids: readonly string[]): void {
+    const strokes = [...new Set(ids)].flatMap((id) => {
+      const value = this.strokeMap.get(id);
+      return value ? [value] : [];
+    });
+    if (strokes.length) this.commit(createEraseEvent(strokes, { id: idFor('event'), time: Date.now() }));
   }
 
   undo(): void {

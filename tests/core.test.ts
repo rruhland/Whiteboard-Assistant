@@ -72,6 +72,37 @@ describe('BoardModel', () => {
     expect(model.events[1].changes[0].before?.id).toBe(id);
   });
 
+  test('updates a selected group in one event and preserves stroke metadata through undo and redo', () => {
+    const first = stroke('first', 0);
+    const second = { ...stroke('second', 10), width: 7, color: '#456', points: [point(10, 0), point(12, 4)] };
+    const model = new BoardModel({ events: [createAddEvent([first, second], 'user', { id: 'add', time: 1 })] });
+    const transformed = model.strokes.map((value) => ({
+      ...value,
+      points: value.points.map((sample) => ({ ...sample, x: sample.x + 5, y: sample.y - 3 })),
+    }));
+
+    model.updateStrokes(transformed);
+
+    expect(model.events.at(-1)).toMatchObject({ kind: 'move', changes: [{ before: { id: 'first' }, after: { id: 'first' } }, { before: { id: 'second' }, after: { id: 'second' } }] });
+    expect(model.strokes[1]).toMatchObject({ id: 'second', width: 7, color: '#456', author: 'user', createdAt: 1 });
+    model.undo();
+    expect(model.strokes).toEqual([first, second]);
+    model.redo();
+    expect(model.strokes).toEqual(transformed);
+  });
+
+  test('erases a selected group as one undoable event and ignores missing IDs', () => {
+    const values = [stroke('first', 0), stroke('second', 10), stroke('third', 20)];
+    const model = new BoardModel({ events: [createAddEvent(values, 'user', { id: 'add', time: 1 })] });
+
+    model.eraseStrokes(['first', 'missing', 'second', 'first']);
+
+    expect(model.events.at(-1)).toMatchObject({ kind: 'erase', changes: [{ before: { id: 'first' } }, { before: { id: 'second' } }] });
+    expect(model.strokes.map(({ id }) => id)).toEqual(['third']);
+    model.undo();
+    expect(model.strokes).toEqual(values);
+  });
+
   test('undo restores erased geometry and redo reapplies it', () => {
     const model = new BoardModel();
     model.addStroke([point(1, 1)], '#000', 3);
