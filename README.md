@@ -1,6 +1,6 @@
 # Whiteboard Assistant
 
-A local-first browser whiteboard for fast freehand capture. Milestone 1D adds deterministic, user-approved assistant annotations over the structured canvas and temporal context established in earlier milestones. It uses native TypeScript, Canvas, DOM, and SVG, with no UI framework, model call, or server.
+A local-first browser whiteboard for fast freehand capture. Milestone 1E adds pen-button shortcuts, touch navigation, group selection and transforms, confirmed page reset, and a local library of named canvases. It uses native TypeScript, Canvas, DOM, and SVG, with no UI framework, model call, or server.
 
 ## Run locally
 
@@ -23,15 +23,21 @@ npm run preview   # serve the production build locally
 
 | Action | Control |
 | --- | --- |
-| Draw | Pen button or `P`, then pointer-drag; a click creates a dot |
-| Select or move one stroke | Select button or `V`, then click or drag a stroke |
-| Delete the selection | `Delete` or `Backspace` |
+| Draw with a stylus | Touch the pen tip to the canvas; no side button is required |
+| Temporary stylus eraser | Hold the lower/eraser side button while touching the canvas |
+| Temporary stylus select | Hold the upper/right-click side button while touching the canvas |
+| Draw with a mouse | Pen button or `P`, then pointer-drag; a click creates a dot |
+| Select strokes | Select button or `V`, then drag a box fully around strokes; hold `Shift` to add another box |
+| Transform a selection | Drag selected ink to move it, edge handles to scale one axis, corner handles to scale proportionally, or the top handle to rotate |
+| Delete the selection | `Delete` or `Backspace`; the group is one undoable edit |
 | Erase whole strokes | Eraser button or `E`, then click or drag across strokes |
-| Pan | Hand button or `H`; middle-button drag; or hold `Space` while dragging |
-| Zoom | Mouse wheel at the pointer, zoom −/+, or Reset |
+| Pan | One-finger drag; Hand button or `H`; middle-button drag; or hold `Space` while dragging |
+| Zoom | Two-finger pinch, mouse wheel at the pointer, zoom −/+, or Reset |
 | Undo | `Ctrl/Cmd+Z` |
 | Redo | `Ctrl/Cmd+Shift+Z` or `Ctrl+Y` |
-| Portable file | **Save file** downloads JSON; **Open** validates and replaces the board |
+| Manage canvases | **Canvases** opens the named local canvas library |
+| Reset the page | **Reset page**, then confirm, to clear the active canvas, objects, history, and viewport |
+| Portable file | **Save file** downloads the active canvas JSON; **Open** validates and replaces only the active canvas |
 | Inspect structure | **Objects** opens the graph inspector; `Escape` closes it |
 | Inspect history | **History** opens the event timeline; Previous/Next, the range, markers, and arrow keys select an event |
 | Leave history | **Return to now**, or press `Escape` once; a second `Escape` closes History |
@@ -41,9 +47,11 @@ The color and width controls apply to new ink. Keyboard shortcuts are ignored wh
 
 ## Data and persistence
 
-Completed edits and viewport changes autosave to this browser's `localStorage`. Autosave makes reloads convenient, but it is tied to the current browser and origin. **Save file** produces a portable, versioned JSON document for backup or transfer. If browser storage fails, the status bar says the board is not saved and file export remains available. A malformed autosave starts an empty usable board with an explanation; a malformed imported file leaves the current board unchanged.
+Completed edits and viewport changes autosave to this browser's `localStorage`. **Canvases** lists the independently saved documents and supports create, open, rename, and confirmed delete. Existing single-board autosaves migrate once into an **Untitled canvas**. Deleting the final canvas creates a fresh Untitled canvas so the app always has an active document.
 
-The version-3 document stores separate append-only ink and association histories plus the viewport. Each stroke retains its stable ID, user or assistant author, creation time, color, width, world-coordinate samples, pressure, and timestamps. Add and erase events can contain a batch of strokes, so approving or deleting one assistant annotation remains a single undoable operation. Undo and redo append compensating ink events, and pan and zoom do not change ink coordinates.
+Local storage makes reloads convenient, but it is tied to the current browser and origin and has a smaller quota than a database. The catalog uses one key per complete canvas so saving one board does not rewrite the others; IndexedDB is deferred until board size makes it necessary. **Save file** still produces one portable, versioned JSON document for backup or transfer. If browser storage fails, the status bar says the canvas is not saved and file export remains available. A malformed catalog or canvas starts or retains a usable board with an explanation; a malformed imported file leaves the active canvas unchanged.
+
+The version-3 document stores separate append-only ink and association histories plus the viewport. Each stroke retains its stable ID, user or assistant author, creation time, color, width, world-coordinate samples, pressure, and timestamps. Add, move, and erase events can contain a batch of strokes, so a group transform, selection deletion, assistant approval, or annotation deletion remains a single undoable operation. Undo and redo append compensating ink events, and pan and zoom do not change ink coordinates.
 
 Version-1 and version-2 files remain supported. On load, their user-authored ink and content objects migrate deterministically, and the next save emits version 3. Version-2 files retain their association history exactly, including intentionally unassigned strokes.
 
@@ -53,7 +61,7 @@ Every newly committed stroke is proposed for the nearest active work object. It 
 
 The **Objects** panel shows active and superseded objects, visible and total member counts, unassigned ink, a spatial graph, lineage, and exact object details. Dashed **Bounds** overlays are optional and remain aligned while ink moves, disappears, reappears, pans, or zooms. The graph uses dashed edges for currently near active objects and solid edges from merge/split children to their historical parents.
 
-To correct grouping, select active objects with their checkboxes and merge them, select a member stroke on the canvas and split it from a multi-stroke object, or select unassigned ink and assign it to one checked object or a new object. Merge and split preserve superseded parents and create new child IDs. These grouping corrections persist immediately and are intentionally separate from board undo/redo, which continues to affect ink edits only.
+To correct grouping, select active objects with their checkboxes and merge them, marquee exactly one member stroke on the canvas and split it from a multi-stroke object, or select exactly one unassigned stroke and assign it to one checked object or a new object. Merge and split preserve superseded parents and create new child IDs. These grouping corrections persist immediately and are intentionally separate from board undo/redo, which continues to affect ink edits only.
 
 ## Temporal context
 
@@ -73,6 +81,6 @@ The normal eraser removes individual annotation strokes, including either arrowh
 
 ## Current scope
 
-Erasing removes an entire stroke, and selection operates on one stroke at a time. Touch drawing uses pointer events, but touch pinch gestures and palm rejection are not guaranteed. This milestone does not include partial-stroke erasing, image/PDF import, OCR, learned vision or language models, generated text, rewriting user strokes, semantic labeling, a graph database, accounts, collaboration, or a server.
+Erasing removes an entire stroke. Fingers are navigation-only, and touch contacts are ignored while the pen tip is actively editing to prevent a palm from moving the board mid-stroke; simultaneous pen editing and touch navigation are not supported. This milestone does not include partial-stroke erasing, lasso selection, resize flipping, transform snapping, image/PDF import, OCR, learned vision or language models, generated text, rewriting user strokes, IndexedDB, accounts, collaboration, or a server.
 
 Follow-on work can replace the deterministic planner with visual and language models while keeping the same preview, approval, provenance, graph, and temporal contracts. Later rewrite operations may join existing content objects; assistant notes remain separately identifiable annotation objects.
