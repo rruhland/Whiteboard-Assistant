@@ -24,6 +24,7 @@ export type TimelineControls = {
 const eventLabels: Record<string, string> = {
   add: 'Stroke added', move: 'Stroke moved', erase: 'Stroke erased', undo: 'Edit undone', redo: 'Edit redone',
   'auto-create': 'Object created', 'auto-append': 'Stroke grouped', 'manual-assign': 'Grouping corrected', 'manual-merge': 'Objects merged', 'manual-split': 'Object split',
+  'assistant-annotation': 'Assistant annotation approved',
 };
 
 export function deriveTimelineControls(state: TimelinePanelState): TimelineControls {

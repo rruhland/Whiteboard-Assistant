@@ -1,6 +1,6 @@
 # Whiteboard Assistant
 
-A local-first browser whiteboard for fast freehand capture. Milestone 1C adds deterministic temporal context over the append-only ink and work-object histories while retaining the compact drawing, grouping, autosave, and portable-file experience. It uses native TypeScript, Canvas, DOM, and SVG, with no UI framework or server.
+A local-first browser whiteboard for fast freehand capture. Milestone 1D adds deterministic, user-approved assistant annotations over the structured canvas and temporal context established in earlier milestones. It uses native TypeScript, Canvas, DOM, and SVG, with no UI framework, model call, or server.
 
 ## Run locally
 
@@ -35,6 +35,7 @@ npm run preview   # serve the production build locally
 | Inspect structure | **Objects** opens the graph inspector; `Escape` closes it |
 | Inspect history | **History** opens the event timeline; Previous/Next, the range, markers, and arrow keys select an event |
 | Leave history | **Return to now**, or press `Escape` once; a second `Escape` closes History |
+| Preview assistant work | **Assistant suggestions** creates independent circle and arrow previews; approve, reject, hide, or regenerate each one |
 
 The color and width controls apply to new ink. Keyboard shortcuts are ignored while an editable control has focus.
 
@@ -42,9 +43,9 @@ The color and width controls apply to new ink. Keyboard shortcuts are ignored wh
 
 Completed edits and viewport changes autosave to this browser's `localStorage`. Autosave makes reloads convenient, but it is tied to the current browser and origin. **Save file** produces a portable, versioned JSON document for backup or transfer. If browser storage fails, the status bar says the board is not saved and file export remains available. A malformed autosave starts an empty usable board with an explanation; a malformed imported file leaves the current board unchanged.
 
-The version-2 document stores separate append-only ink and association histories plus the viewport. Each stroke retains its stable ID, author, creation time, color, width, world-coordinate samples, pressure, and timestamps. Undo and redo append compensating ink events, so the edit history remains available rather than being rewritten. Pan and zoom do not change ink coordinates.
+The version-3 document stores separate append-only ink and association histories plus the viewport. Each stroke retains its stable ID, user or assistant author, creation time, color, width, world-coordinate samples, pressure, and timestamps. Add and erase events can contain a batch of strokes, so approving or deleting one assistant annotation remains a single undoable operation. Undo and redo append compensating ink events, and pan and zoom do not change ink coordinates.
 
-Version-1 files remain supported. On load, their currently visible strokes are grouped deterministically and the next save emits version 2. Version-2 files replay their association history exactly, including intentionally unassigned strokes.
+Version-1 and version-2 files remain supported. On load, their user-authored ink and content objects migrate deterministically, and the next save emits version 3. Version-2 files retain their association history exactly, including intentionally unassigned strokes.
 
 ## Work objects
 
@@ -56,14 +57,22 @@ To correct grouping, select active objects with their checkboxes and merge them,
 
 ## Temporal context
 
-The assistant-facing temporal layer is derived from the version-2 document rather than stored beside it. It dependency-merges the ink and association logs, reconstructs any event prefix, and exposes compact queries for the current context, a change range, object lineage, or a spatial region. Current context emphasizes visible ink, active objects, the current activity segment, and changes since a prior observation. Exact stroke geometry is opt-in. Erased geometry is returned only when a targeted region query explicitly sets `includeErased`.
+The assistant-facing temporal layer is derived from the version-3 document rather than stored beside it. It dependency-merges the ink and association logs, reconstructs any event prefix, and exposes compact queries for the current context, a change range, object lineage, annotation links, or a spatial region. Current context emphasizes visible ink, active content objects, the current activity segment, and changes since a prior observation. Exact stroke geometry is opt-in. Erased geometry is returned only when a targeted region query explicitly sets `includeErased`.
 
 The **History** dock is the human inspection surface for the same derived timeline. Position zero is the empty board; every later position is the state after one event. Events more than 30 seconds after the preceding event begin a new activity segment. The optional heatmap samples changed ink in the selected segment and decays activity with a ten-second half-life. Association corrections appear as markers but do not create spatial heat.
 
-Historical positions are observational and read-only, including the latest event. Drawing, moving, erasing, undo/redo, grouping corrections, and file open/save stay disabled until **Return to now**. Historical pan and zoom use a temporary viewport, and autosave/export always read the untouched live workspace. On narrow screens, History and Objects use mutually exclusive overlays while retaining the selected historical position.
+Historical positions are observational and read-only, including the latest event. Drawing, moving, erasing, undo/redo, grouping corrections, assistant actions, and file open/save stay disabled until **Return to now**. Historical pan and zoom use a temporary viewport, and autosave/export always read the untouched live workspace. On narrow screens, Assistant, History, and Objects use mutually exclusive overlays while retaining the selected historical position.
+
+## Scripted assistant proof of concept
+
+**Assistant suggestions** runs a deterministic in-browser planner against current work objects and the recent event segment. It does not inspect canvas pixels. The circle surrounds the active content bounds to benchmark drawing over relevant work. The arrow points back from the clearest nearby side to benchmark locating free space beside that work. Both are dashed violet previews that stay outside autosave, export, undo, history, hit testing, and the object graph until approved.
+
+Circle and arrow decisions are independent. Rejecting one remembers its exact fingerprint for this browser session, so **Regenerate** advances that card without repeating it; reload or board replacement clears that memory. Approving a card creates assistant-authored geometry and a separately editable annotation object. Circles link with `annotates`; arrows link with `points-to`. The user approval and assistant provenance remain explicit in version 3 and in historical replay.
+
+The normal eraser removes individual annotation strokes, including either arrowhead. **Delete annotation** removes every remaining visible member in one batch, and undo/redo restores or removes that batch together. An erased annotation remains in graph history with zero visible members, while its link continues to reference the original stable content object.
 
 ## Current scope
 
-Erasing removes an entire stroke, and selection operates on one stroke at a time. Touch drawing uses pointer events, but touch pinch gestures and palm rejection are not guaranteed. This milestone does not include partial-stroke erasing, image/PDF import, OCR, learned vision or language models, semantic labeling, a graph database, accounts, collaboration, or a server.
+Erasing removes an entire stroke, and selection operates on one stroke at a time. Touch drawing uses pointer events, but touch pinch gestures and palm rejection are not guaranteed. This milestone does not include partial-stroke erasing, image/PDF import, OCR, learned vision or language models, generated text, rewriting user strokes, semantic labeling, a graph database, accounts, collaboration, or a server.
 
-Planned follow-on work will decide how an assistant chooses between compact current context and targeted history retrieval. Milestone 1D can then demonstrate scripted assistant insertion and inspection, writing only on top of the current canvas while using history as observational context. Visual-model integration follows Milestone 1; it can consume stable work objects, lineage, and temporal queries instead of interpreting an undifferentiated bitmap.
+Follow-on work can replace the deterministic planner with visual and language models while keeping the same preview, approval, provenance, graph, and temporal contracts. Later rewrite operations may join existing content objects; assistant notes remain separately identifiable annotation objects.

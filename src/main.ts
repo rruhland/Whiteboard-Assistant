@@ -1,5 +1,7 @@
 import './style.css';
 import { getUnassignedVisibleStrokes, projectGraph } from './association';
+import { AssistantPanel, visiblePreviewStrokes } from './assistant-panel';
+import { afterWorkspaceMutation, approveAssistantProposal, createAssistantSession, deleteAnnotation, generateAssistantSession, hasAssistantCandidate, regenerateAssistantSlot, rejectAssistantProposal, setProposalVisibility, type AssistantSession, type WorkspaceMutation } from './assistant-session';
 import { type Point } from './board';
 import { CanvasRenderer } from './canvas';
 import { serializeBoard } from './document';
@@ -47,6 +49,9 @@ const objectPanelBackdrop = element<HTMLButtonElement>('#object-panel-backdrop')
 const historyToggle = element<HTMLButtonElement>('#history-toggle');
 const timelinePanelRoot = element<HTMLElement>('#timeline-panel');
 const historicalStatus = element<HTMLElement>('#historical-status');
+const assistantToggle = element<HTMLButtonElement>('#assistant-toggle');
+const assistantPanelRoot = element<HTMLElement>('#assistant-panel');
+const assistantPanelBackdrop = element<HTMLButtonElement>('#assistant-panel-backdrop');
 
 let workspace: WorkspaceState = loadWorkspace({
   sourceVersion: 3,
@@ -67,6 +72,8 @@ let checkedObjectIds = new Set<string>();
 let selectedObjectId: string | null = null;
 let historicalSelectedObjectId: string | null = null;
 let timelinePanelOpen = false;
+let assistantPanelOpen = false;
+let assistantSession: AssistantSession = createAssistantSession();
 
 try {
   storage = window.localStorage;
@@ -122,7 +129,20 @@ function closeObjectPanel(): void {
   objectsToggle.focus();
 }
 
+function refreshAssistantPanel(): void {
+  assistantToggle.setAttribute('aria-expanded', String(assistantPanelOpen));
+  assistantPanelBackdrop.hidden = !assistantPanelOpen;
+  assistantPanel.render({ open: assistantPanelOpen, proposals: assistantSession.proposals, readOnly: isHistorical() });
+}
+
+function closeAssistantPanel(): void {
+  assistantPanelOpen = false;
+  refreshAssistantPanel();
+  assistantToggle.focus();
+}
+
 function finishAssociationCorrection(message: string): void {
+  assistantSession = afterWorkspaceMutation(assistantSession, 'association');
   const activeIds = new Set(workspace.associations.objects.filter(({ status }) => status === 'active').map(({ id }) => id));
   checkedObjectIds = new Set([...checkedObjectIds].filter((id) => activeIds.has(id)));
   objectPanel.setStatus(message);
@@ -182,7 +202,23 @@ const objectPanel = new ObjectPanel(objectPanelRoot, {
     refreshPanel();
     scheduleRender();
   },
-  onDeleteSelectedAnnotation() {},
+  onDeleteSelectedAnnotation() {
+    if (isHistorical() || !selectedObjectId) return;
+    try {
+      const eventId = deleteAnnotation(workspace, historySession, selectedObjectId, { id: `event-delete-annotation-${Date.now()}`, time: Date.now() });
+      if (!eventId) { objectPanel.setStatus('Annotation is already erased'); refreshPanel(); return; }
+      assistantSession = afterWorkspaceMutation(assistantSession, 'annotation-delete');
+      refreshCachedMetadata();
+      rebuildHistory();
+      objectPanel.setStatus('Annotation deleted');
+      updateControls();
+      scheduleRender();
+      persist();
+    } catch (error) {
+      objectPanel.setStatus(error instanceof Error ? error.message : String(error));
+      refreshPanel();
+    }
+  },
 });
 
 function enterHistoryPosition(position: number): void {
@@ -191,6 +227,8 @@ function enterHistoryPosition(position: number): void {
     const entering = !isHistorical();
     historySession = selectHistoryPosition(workspace, historySession, position);
     if (entering) historicalSelectedObjectId = null;
+    assistantSession = { proposals: null, rejectedFingerprints: new Set(assistantSession.rejectedFingerprints) };
+    assistantPanelOpen = false;
     activeTool = 'hand';
     canvas.dataset.tool = activeTool;
     updateControls();
@@ -216,6 +254,48 @@ const timelinePanel = new TimelinePanel(timelinePanelRoot, {
   onSelectPosition: enterHistoryPosition,
   onReturnToNow: showNow,
   onToggleHeatmap(enabled) { historySession = { ...historySession, heatmapEnabled: enabled }; updateControls(); scheduleRender(); },
+});
+
+const assistantPanel = new AssistantPanel(assistantPanelRoot, {
+  onClose: closeAssistantPanel,
+  onGenerate() {
+    if (isHistorical()) return;
+    try {
+      assistantSession = generateAssistantSession(workspace, historySession, assistantSession);
+      updateControls();
+      scheduleRender();
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); }
+  },
+  onApprove(kind) {
+    if (isHistorical()) return;
+    try {
+      const generationId = assistantSession.proposals?.generationId;
+      const result = approveAssistantProposal(workspace, historySession, assistantSession, kind, Date.now());
+      assistantSession = afterWorkspaceMutation(result.session, 'assistant-approval', generationId);
+      selectedObjectId = result.annotationId;
+      refreshCachedMetadata();
+      rebuildHistory();
+      updateControls();
+      scheduleRender();
+      persist();
+    } catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); updateControls(); }
+  },
+  onReject(kind) {
+    if (isHistorical()) return;
+    try { assistantSession = rejectAssistantProposal(assistantSession, kind); updateControls(); scheduleRender(); }
+    catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); }
+  },
+  onRegenerate(kind) {
+    if (isHistorical()) return;
+    try { assistantSession = regenerateAssistantSlot(workspace, historySession, assistantSession, kind); updateControls(); scheduleRender(); }
+    catch (error) { setStatus(error instanceof Error ? error.message : String(error), 'error'); }
+  },
+  onTogglePreview(kind, visible) {
+    if (isHistorical()) return;
+    assistantSession = setProposalVisibility(assistantSession, kind, visible);
+    updateControls();
+    scheduleRender();
+  },
 });
 
 function refreshCachedMetadata(): void {
@@ -257,7 +337,7 @@ function scheduleRender(): void {
       activitySamples: isHistorical() && historySession.heatmapEnabled && historySession.position !== null
         ? buildActivitySamples(currentDocument(), historySession.index, historySession.position)
         : [],
-      assistantPreviewStrokes: [],
+      assistantPreviewStrokes: isHistorical() ? [] : visiblePreviewStrokes(assistantSession.proposals),
     });
   });
 }
@@ -271,6 +351,7 @@ function updateControls(): void {
   redoButton.disabled = isHistorical() || !workspace.board.canRedo;
   openButton.disabled = isHistorical();
   saveButton.disabled = isHistorical();
+  assistantToggle.disabled = isHistorical();
   colorInput.disabled = isHistorical();
   widthInput.disabled = isHistorical();
   onboarding.hidden = hasDrawn;
@@ -287,6 +368,7 @@ function updateControls(): void {
   historyToggle.setAttribute('aria-expanded', String(timelinePanelOpen));
   timelinePanel.render({ index: historySession.index, open: timelinePanelOpen, position: historySession.position, heatmapEnabled: historySession.heatmapEnabled });
   refreshPanel();
+  refreshAssistantPanel();
 }
 
 function setStatus(message: string, state: 'normal' | 'error' = 'normal'): void {
@@ -314,7 +396,8 @@ function persistNavigationSoon(): void {
   navigationSaveTimer = window.setTimeout(persist, 220);
 }
 
-function afterEdit(): void {
+function afterEdit(mutation: WorkspaceMutation = 'ink'): void {
+  assistantSession = afterWorkspaceMutation(assistantSession, mutation);
   refreshCachedMetadata();
   if (selectedId && !workspace.board.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
   rebuildHistory();
@@ -416,22 +499,22 @@ function endPointer(event: PointerEvent): void {
 
   if (commit.type === 'ink') {
     const result = commitStroke(workspace, commit.points, colorInput.value, Number(widthInput.value));
-    afterEdit();
+    afterEdit('ink');
     if (result.associationError) setStatus(`Stroke saved; grouping failed: ${result.associationError}`, 'error');
   } else if (commit.type === 'move') {
     if (commit.dx !== 0 || commit.dy !== 0) {
       workspace.board.moveStroke(commit.strokeId, commit.dx, commit.dy);
-      afterEdit();
+      afterEdit('ink');
     } else {
       scheduleRender();
     }
   } else if (commit.type === 'erase') {
     for (const id of commit.strokeIds) workspace.board.eraseStroke(id);
-    if (commit.strokeIds.length) afterEdit();
+    if (commit.strokeIds.length) afterEdit('partial-erase');
     else scheduleRender();
   } else {
     if (isHistorical()) historySession = { ...historySession, historicalViewport: commit.viewport };
-    else workspace.viewport = commit.viewport;
+    else { workspace.viewport = commit.viewport; assistantSession = afterWorkspaceMutation(assistantSession, 'viewport'); }
     updateControls();
     scheduleRender();
     if (!isHistorical()) persistNavigationSoon();
@@ -443,7 +526,7 @@ function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
   const bounds = canvas.getBoundingClientRect();
   const viewport = zoomAt(displayViewport(), anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
   if (isHistorical()) historySession = { ...historySession, historicalViewport: viewport };
-  else workspace.viewport = viewport;
+  else { workspace.viewport = viewport; assistantSession = afterWorkspaceMutation(assistantSession, 'viewport'); }
   updateControls();
   scheduleRender();
   if (!isHistorical()) persistNavigationSoon();
@@ -453,14 +536,14 @@ function undo(): void {
   if (isHistorical()) return;
   cancelActiveGesture();
   workspace.board.undo();
-  afterEdit();
+  afterEdit('undo');
 }
 
 function redo(): void {
   if (isHistorical()) return;
   cancelActiveGesture();
   workspace.board.redo();
-  afterEdit();
+  afterEdit('redo');
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -497,7 +580,7 @@ element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => changeZoo
 element<HTMLButtonElement>('#reset-view').addEventListener('click', () => {
   cancelActiveGesture();
   if (isHistorical()) historySession = { ...historySession, historicalViewport: { x: 0, y: 0, zoom: 1 } };
-  else workspace.viewport = { x: 0, y: 0, zoom: 1 };
+  else { workspace.viewport = { x: 0, y: 0, zoom: 1 }; assistantSession = afterWorkspaceMutation(assistantSession, 'viewport'); }
   updateControls();
   scheduleRender();
   if (!isHistorical()) persistNavigationSoon();
@@ -534,6 +617,8 @@ fileInput.addEventListener('change', async () => {
     }
     workspace = loadWorkspace(result.document);
     historySession = createHistorySession(workspace);
+    assistantSession = createAssistantSession();
+    assistantPanelOpen = false;
     selectedId = null;
     selectedObjectId = null;
     checkedObjectIds.clear();
@@ -561,6 +646,11 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (isEditable(event.target)) return;
+  if (event.key === 'Escape' && assistantPanelOpen) {
+    event.preventDefault();
+    closeAssistantPanel();
+    return;
+  }
   if (event.key === 'Escape' && objectPanelOpen) {
     event.preventDefault();
     closeObjectPanel();
@@ -603,7 +693,7 @@ window.addEventListener('keydown', (event) => {
     cancelActiveGesture();
     workspace.board.eraseStroke(selectedId);
     selectedId = null;
-    afterEdit();
+    afterEdit('partial-erase');
   }
 });
 window.addEventListener('keyup', (event) => {
@@ -617,17 +707,27 @@ window.addEventListener('blur', () => {
 new ResizeObserver(scheduleRender).observe(canvas);
 objectsToggle.addEventListener('click', () => {
   objectPanelOpen = !objectPanelOpen;
-  if (objectPanelOpen && window.innerWidth < 760) timelinePanelOpen = false;
+  if (objectPanelOpen && window.innerWidth < 760) { timelinePanelOpen = false; assistantPanelOpen = false; }
   updateControls();
   if (objectPanelOpen) objectPanelRoot.querySelector<HTMLElement>('button, input')?.focus();
 });
 historyToggle.addEventListener('click', () => {
   timelinePanelOpen = !timelinePanelOpen;
-  if (timelinePanelOpen && window.innerWidth < 760) objectPanelOpen = false;
+  if (timelinePanelOpen && window.innerWidth < 760) { objectPanelOpen = false; assistantPanelOpen = false; }
   updateControls();
   if (timelinePanelOpen) timelinePanel.focusHeading();
 });
+assistantToggle.addEventListener('click', () => {
+  if (isHistorical()) return;
+  assistantPanelOpen = !assistantPanelOpen;
+  if (assistantPanelOpen && window.innerWidth < 760) { objectPanelOpen = false; timelinePanelOpen = false; }
+  if (assistantPanelOpen && !hasAssistantCandidate(assistantSession)) assistantSession = generateAssistantSession(workspace, historySession, assistantSession);
+  updateControls();
+  scheduleRender();
+  if (assistantPanelOpen) assistantPanel.focusHeading();
+});
 objectPanelBackdrop.addEventListener('click', closeObjectPanel);
+assistantPanelBackdrop.addEventListener('click', closeAssistantPanel);
 canvas.dataset.tool = activeTool;
 updateControls();
 scheduleRender();

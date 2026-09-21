@@ -7,6 +7,7 @@ export type AssistantSession = {
   proposals: ProposalSet | null;
   rejectedFingerprints: Set<string>;
 };
+export type WorkspaceMutation = 'ink' | 'undo' | 'redo' | 'association' | 'import' | 'assistant-approval' | 'partial-erase' | 'annotation-delete' | 'viewport';
 
 function cloneSession(session: AssistantSession): AssistantSession {
   return { proposals: session.proposals ? structuredClone(session.proposals) : null, rejectedFingerprints: new Set(session.rejectedFingerprints) };
@@ -22,6 +23,10 @@ function replaceSlot(proposals: ProposalSet, kind: ProposalKind, slot: ProposalS
 
 export function createAssistantSession(): AssistantSession {
   return { proposals: null, rejectedFingerprints: new Set() };
+}
+
+export function hasAssistantCandidate(session: AssistantSession): boolean {
+  return Boolean(session.proposals?.circle.proposal || session.proposals?.arrow.proposal);
 }
 
 function requireLive(history: HistorySession): void {
@@ -72,6 +77,20 @@ export function invalidateAssistantSession(session: AssistantSession, message = 
     slot.proposal.state = 'stale';
     slot.proposal.visible = false;
     slot.message = message;
+  }
+  return next;
+}
+
+export function afterWorkspaceMutation(session: AssistantSession, mutation: WorkspaceMutation, approvedGenerationId?: string): AssistantSession {
+  if (mutation === 'viewport') return cloneSession(session);
+  if (mutation !== 'assistant-approval') return invalidateAssistantSession(session);
+  const next = cloneSession(session);
+  if (!next.proposals) return next;
+  for (const slot of [next.proposals.circle, next.proposals.arrow]) {
+    if (!slot.proposal || slot.proposal.generationId === approvedGenerationId) continue;
+    slot.proposal.state = 'stale';
+    slot.proposal.visible = false;
+    slot.message = 'Canvas changed. Regenerate this suggestion.';
   }
   return next;
 }
