@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BoardDocumentV2, ParsedBoard } from '../src/document';
+import type { BoardDocumentV3, ParsedBoard } from '../src/document';
 import {
   AUTOSAVE_KEY,
   loadAutosave,
@@ -9,8 +9,8 @@ import {
   type StorageLike,
 } from '../src/storage';
 
-const empty: BoardDocumentV2 = { version: 2, events: [], associationEvents: [], viewport: { x: 4, y: 8, zoom: 1.25 } };
-const parsedEmpty: ParsedBoard = { sourceVersion: 2, document: empty };
+const empty: BoardDocumentV3 = { version: 3, events: [], associationEvents: [], viewport: { x: 4, y: 8, zoom: 1.25 } };
+const parsedEmpty: ParsedBoard = { sourceVersion: 3, document: empty };
 
 function memoryStorage(initial?: string): StorageLike {
   let value = initial ?? null;
@@ -58,7 +58,7 @@ describe('board persistence', () => {
   });
 
   it('accepts a valid portable document and reports replacement', () => {
-    const current: ParsedBoard = { sourceVersion: 2, document: { ...empty, viewport: { x: 0, y: 0, zoom: 1 } } };
+    const current: ParsedBoard = { sourceVersion: 3, document: { ...empty, viewport: { x: 0, y: 0, zoom: 1 } } };
     const result = readPortableBoard(JSON.stringify(empty), current);
 
     expect(result).toEqual({ document: parsedEmpty, replaced: true });

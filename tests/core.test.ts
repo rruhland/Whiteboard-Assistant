@@ -8,7 +8,7 @@ import {
   type Stroke,
   type StrokeAuthor,
 } from '../src/board';
-import { parseBoard, serializeBoard, type BoardDocumentV2 } from '../src/document';
+import { parseBoard, serializeBoard, type BoardDocumentV3 } from '../src/document';
 import {
   hitTestStroke,
   hitTestStrokesAlongSegment,
@@ -122,10 +122,10 @@ describe('BoardModel', () => {
   test('round trips document data while preserving events, IDs, geometry, and viewport', () => {
     const model = new BoardModel();
     model.addStroke([point(-8, -2)], '#abc', 6);
-    const document: BoardDocumentV2 = { version: 2, events: model.events, associationEvents: [], viewport };
+    const document: BoardDocumentV3 = { version: 3, events: model.events, associationEvents: [], viewport };
     const restored = parseBoard(serializeBoard(document));
 
-    expect(restored).toEqual({ sourceVersion: 2, document });
+    expect(restored).toEqual({ sourceVersion: 3, document });
     expect(new BoardModel(restored.document).strokes).toEqual(model.strokes);
   });
 
@@ -145,7 +145,7 @@ describe('BoardModel', () => {
 
   test('rejects unsupported versions, nonfinite geometry, duplicate IDs, and invalid references', () => {
     const base: BoardDocument = { version: 1, events: [], viewport };
-    expect(() => parseBoard(JSON.stringify({ ...base, version: 3 }))).toThrow(/version/i);
+    expect(() => parseBoard(JSON.stringify({ ...base, version: 4 }))).toThrow(/version/i);
     expect(() => parseBoard(JSON.stringify({ ...base, viewport: { ...viewport, zoom: NaN } }))).toThrow(/finite|zoom/i);
 
     const duplicate: Stroke = {

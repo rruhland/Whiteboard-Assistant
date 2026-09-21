@@ -49,8 +49,8 @@ const timelinePanelRoot = element<HTMLElement>('#timeline-panel');
 const historicalStatus = element<HTMLElement>('#historical-status');
 
 let workspace: WorkspaceState = loadWorkspace({
-  sourceVersion: 2,
-  document: { version: 2, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } },
+  sourceVersion: 3,
+  document: { version: 3, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } },
 });
 let selectedId: string | null = null;
 let activeTool: Tool = 'pen';
@@ -73,8 +73,8 @@ try {
   const restored = loadAutosave(storage);
   if (restored.document) {
     workspace = loadWorkspace(restored.document);
-    if (workspace.migratedFromVersion1) saveAutosave(storage, workspaceDocument(workspace));
-    saveStatus.textContent = workspace.migratedFromVersion1 ? 'Restored and upgraded autosave' : 'Restored autosave';
+    if (workspace.migratedFromVersion !== null) saveAutosave(storage, workspaceDocument(workspace));
+    saveStatus.textContent = workspace.migratedFromVersion !== null ? 'Restored and upgraded autosave' : 'Restored autosave';
   } else if (restored.error) {
     saveStatus.textContent = restored.error;
     saveStatus.dataset.state = 'error';
@@ -525,7 +525,7 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
   if (!file) return;
   try {
-    const result = openPortableBoard(await file.text(), { sourceVersion: 2, document: currentDocument() }, storage);
+    const result = openPortableBoard(await file.text(), { sourceVersion: 3, document: currentDocument() }, storage);
     if (!result.replaced) {
       setStatus(result.error ?? 'Open failed', 'error');
       return;
@@ -539,7 +539,7 @@ fileInput.addEventListener('change', async () => {
     updateControls();
     scheduleRender();
     if (result.error) setStatus(result.error, 'error');
-    else if (persist()) setStatus(workspace.migratedFromVersion1 ? 'Board opened, upgraded, and saved locally' : 'Board opened and saved locally');
+    else if (persist()) setStatus(workspace.migratedFromVersion !== null ? 'Board opened, upgraded, and saved locally' : 'Board opened and saved locally');
   } catch (error) {
     setStatus(`Open failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
   }

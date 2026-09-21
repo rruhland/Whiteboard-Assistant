@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { AssociationEvent } from '../src/association';
-import type { BoardDocumentV2 } from '../src/document';
+import type { BoardDocumentV3 } from '../src/document';
 import { buildActivitySamples, buildTemporalIndex } from '../src/temporal';
 import { fixtureDocument, positionOf, stroke } from './temporal-fixtures';
 
@@ -19,7 +19,7 @@ describe('activity map', () => {
 
   test('uses before geometry for erase and produces no heat for association-only selection', () => {
     const erased = stroke('erased', 0);
-    const eraseDocument: BoardDocumentV2 = { version: 2, viewport, associationEvents: [], events: [
+    const eraseDocument: BoardDocumentV3 = { version: 3, viewport, associationEvents: [], events: [
       { id: 'add', time: 0, actor: 'user', kind: 'add', changes: [{ before: null, after: erased }] },
       { id: 'erase', time: 1, actor: 'user', kind: 'erase', changes: [{ before: erased, after: null }] },
     ] };
