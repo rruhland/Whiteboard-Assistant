@@ -12,6 +12,18 @@ function state(overrides: Partial<ObjectPanelState> = {}): ObjectPanelState {
 }
 
 describe('object panel view model', () => {
+  test('content corrections exclude checked annotation nodes', () => {
+    const annotation: GraphNode = { objectType: 'annotation', id: 'note', label: 'Assistant arrow', strokeIds: ['assistant'], createdAt: 3, lastAssociatedAt: 3, status: 'active', parentIds: [], annotationKind: 'arrow', links: [{ type: 'points-to', targetObjectId: 'a' }], proposalId: 'proposal', contextPosition: 1, createdBy: 'assistant', approvedAt: 3, visibleStrokeCount: 1 };
+    expect(derivePanelControls(state({ nodes: [...nodes, annotation], checkedObjectIds: new Set(['a', 'note']) }))).toMatchObject({ canMerge: false });
+  });
+
+  test('enables whole-annotation deletion only for a live selected annotation with visible members', () => {
+    const annotation = (visibleStrokeCount: number): GraphNode => ({ objectType: 'annotation', id: 'note', label: 'Assistant circle', strokeIds: ['assistant'], createdAt: 3, lastAssociatedAt: 3, status: 'active', parentIds: [], annotationKind: 'circle', links: [{ type: 'annotates', targetObjectId: 'a' }], proposalId: 'proposal', contextPosition: 1, createdBy: 'assistant', approvedAt: 3, visibleStrokeCount });
+    expect(derivePanelControls(state({ nodes: [...nodes, annotation(2)], selectedObjectId: 'note' }))).toMatchObject({ canDeleteSelectedAnnotation: true });
+    expect(derivePanelControls(state({ nodes: [...nodes, annotation(0)], selectedObjectId: 'note' }))).toMatchObject({ canDeleteSelectedAnnotation: false });
+    expect(derivePanelControls(state({ nodes: [...nodes, annotation(2)], selectedObjectId: 'note', readOnly: true }))).toMatchObject({ canDeleteSelectedAnnotation: false });
+  });
+
   test('enables merge and split for eligible selections', () => {
     expect(derivePanelControls(state())).toMatchObject({ canMerge: true, canSplit: true, canAssignToChecked: false, canCreateObject: false });
   });
@@ -28,6 +40,6 @@ describe('object panel view model', () => {
   });
 
   test('disables every correction in historical mode', () => {
-    expect(derivePanelControls(state({ readOnly: true }))).toEqual({ canMerge: false, canSplit: false, canAssignToChecked: false, canCreateObject: false });
+    expect(derivePanelControls(state({ readOnly: true }))).toEqual({ canMerge: false, canSplit: false, canAssignToChecked: false, canCreateObject: false, canDeleteSelectedAnnotation: false });
   });
 });

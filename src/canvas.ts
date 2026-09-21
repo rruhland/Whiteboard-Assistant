@@ -13,6 +13,7 @@ export type RenderState = {
   objectOverlays: ObjectOverlay[];
   selectedObjectStrokeIds: ReadonlySet<string>;
   activitySamples: ActivitySample[];
+  assistantPreviewStrokes: Stroke[];
 };
 
 function drawStroke(
@@ -108,6 +109,16 @@ export class CanvasRenderer {
 
     if (state.gesture?.type === 'ink') {
       drawStroke(context, { points: state.gesture.points, color: state.inkColor, width: state.inkWidth });
+    }
+
+    if (state.assistantPreviewStrokes.length) {
+      context.save();
+      context.globalAlpha = 0.82;
+      context.setLineDash([8 / viewport.zoom, 6 / viewport.zoom]);
+      for (const stroke of state.assistantPreviewStrokes) {
+        drawStroke(context, stroke, 0, 0, '#7657d6', Math.max(stroke.width, 2.5 / viewport.zoom));
+      }
+      context.restore();
     }
 
     for (const overlay of state.objectOverlays) this.drawObjectOverlay(overlay, viewport.zoom);

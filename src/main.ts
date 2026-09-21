@@ -182,6 +182,7 @@ const objectPanel = new ObjectPanel(objectPanelRoot, {
     refreshPanel();
     scheduleRender();
   },
+  onDeleteSelectedAnnotation() {},
 });
 
 function enterHistoryPosition(position: number): void {
@@ -256,6 +257,7 @@ function scheduleRender(): void {
       activitySamples: isHistorical() && historySession.heatmapEnabled && historySession.position !== null
         ? buildActivitySamples(currentDocument(), historySession.index, historySession.position)
         : [],
+      assistantPreviewStrokes: [],
     });
   });
 }
