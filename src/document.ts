@@ -91,6 +91,20 @@ function validateInk(events: unknown): BoardEvent[] {
   return new BoardModel({ events: events as BoardEvent[] }).events;
 }
 
+function validateLegacyInk(events: unknown): void {
+  if (!Array.isArray(events)) throw new Error('Board document events must be an array');
+  for (const event of events) {
+    if (!isRecord(event) || event.actor !== 'user') throw new Error('Legacy ink events must be user-authored');
+    if (!Array.isArray(event.changes) || event.changes.length !== 1) throw new Error('Legacy ink events must contain a single change');
+    for (const change of event.changes) {
+      if (!isRecord(change)) continue;
+      for (const stroke of [change.before, change.after]) {
+        if (stroke !== null && isRecord(stroke) && stroke.author !== 'user') throw new Error('Legacy strokes must be user-authored');
+      }
+    }
+  }
+}
+
 export function parseBoard(json: string): ParsedBoard {
   if (typeof json !== 'string') throw new Error('Board JSON must be a string');
   let value: unknown;
@@ -100,6 +114,8 @@ export function parseBoard(json: string): ParsedBoard {
     throw new Error(`Invalid board JSON: ${error instanceof Error ? error.message : 'parse error'}`);
   }
   if (!isRecord(value)) throw new Error('Board document must be an object');
+  if (value.version !== 1 && value.version !== 2) throw new Error('Unsupported board document version');
+  validateLegacyInk(value.events);
   const events = validateInk(value.events);
   const viewport = validateViewport(value.viewport);
   if (value.version === 1) return { sourceVersion: 1, document: { version: 1, events, viewport } };

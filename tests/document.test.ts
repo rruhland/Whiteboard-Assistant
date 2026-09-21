@@ -1,12 +1,29 @@
 import { describe, expect, test } from 'vitest';
-import { BoardModel, type Point } from '../src/board';
+import { BoardModel, createAddEvent, type Point, type Stroke, type StrokeAuthor } from '../src/board';
 import { composeBoardDocument, parseBoard, serializeBoard, type BoardDocumentV1, type BoardDocumentV2 } from '../src/document';
 import type { AssociationEvent } from '../src/association';
 
 const viewport = { x: -20, y: 30, zoom: 2 };
 const v1: BoardDocumentV1 = { version: 1, events: [], viewport };
+const stroke = (id: string, x: number, author: StrokeAuthor = 'user'): Stroke => ({
+  id, createdAt: 1, author, color: '#000', width: 2,
+  points: [{ x, y: 0, pressure: 0.5, time: 1 }],
+});
+
+function legacyDocument(version: 1 | 2, events: ReturnType<typeof createAddEvent>[]) {
+  return version === 1
+    ? { version, events, viewport }
+    : { version, events, associationEvents: [], viewport };
+}
 
 describe('versioned board documents', () => {
+  test.each([1, 2] as const)('legacy version %s rejects assistant and batch ink', (version) => {
+    const assistant = legacyDocument(version, [createAddEvent([stroke('a', 0, 'assistant')], 'assistant', { id: 'a', time: 1 })]);
+    expect(() => parseBoard(JSON.stringify(assistant))).toThrow(/legacy|user|single/i);
+    const batch = legacyDocument(version, [createAddEvent([stroke('a', 0), stroke('b', 10)], 'user', { id: 'batch', time: 1 })]);
+    expect(() => parseBoard(JSON.stringify(batch))).toThrow(/legacy|single/i);
+  });
+
   test('distinguishes version 1 from version 2 without auto-grouping version 2', () => {
     expect(parseBoard(JSON.stringify(v1)).sourceVersion).toBe(1);
     const document: BoardDocumentV2 = { ...v1, version: 2, associationEvents: [] };
