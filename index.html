@@ -53,6 +53,8 @@
           <button id="assistant-toggle" class="text-button" aria-expanded="false" aria-controls="assistant-panel">Assistant suggestions</button>
           <button id="objects-toggle" class="text-button" aria-expanded="false" aria-controls="object-panel">Objects</button>
           <button id="history-toggle" class="text-button" aria-expanded="false" aria-controls="timeline-panel">History</button>
+          <button id="canvases-toggle" class="text-button" aria-expanded="false" aria-controls="canvas-library">Canvases</button>
+          <button id="reset-page" class="text-button" title="Clear the active canvas and its history">Reset page</button>
           <button id="open-board" class="text-button" title="Open a board JSON file">Open</button>
           <button id="save-board" class="text-button primary" title="Download a portable board JSON file">Save file</button>
           <input id="file-input" type="file" accept="application/json,.json" hidden />
@@ -77,6 +79,9 @@
         <button id="assistant-panel-backdrop" class="panel-backdrop" aria-label="Close assistant suggestions" hidden></button>
         <aside id="assistant-panel" class="assistant-panel" aria-label="Assistant suggestions" hidden></aside>
       </main>
+
+      <button id="canvas-library-backdrop" class="canvas-library-backdrop" aria-label="Close canvases" hidden></button>
+      <section id="canvas-library" class="canvas-library" role="dialog" aria-modal="true" aria-labelledby="canvas-library-title" hidden></section>
 
       <aside id="timeline-panel" class="timeline-panel" aria-label="Board history" hidden></aside>
 

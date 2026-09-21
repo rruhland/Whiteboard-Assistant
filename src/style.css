@@ -662,6 +662,64 @@ canvas:focus-visible,
   background: #c35649;
 }
 
+.canvas-library-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  border: 0;
+  background: rgba(24, 34, 36, 0.46);
+}
+
+.canvas-library {
+  position: fixed;
+  z-index: 21;
+  top: 50%;
+  left: 50%;
+  width: min(680px, calc(100% - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  overflow: auto;
+  transform: translate(-50%, -50%);
+  padding: 22px;
+  border: 1px solid #d5d8d3;
+  border-radius: 16px;
+  background: #fcfbf7;
+  box-shadow: 0 22px 70px rgba(24, 34, 36, 0.34);
+}
+
+.canvas-library[hidden],
+.canvas-library-backdrop[hidden] { display: none; }
+
+.canvas-library-header,
+.canvas-library-summary,
+.canvas-library-actions,
+.canvas-create-form > div {
+  display: flex;
+  align-items: center;
+}
+
+.canvas-library-header { justify-content: space-between; }
+.canvas-library-header h2 { margin: 0; font-size: 23px; }
+.canvas-library-header > button { width: 36px; height: 36px; border: 0; border-radius: 8px; background: #eef0ec; font-size: 22px; cursor: pointer; }
+.canvas-create-form { margin: 20px 0 16px; }
+.canvas-create-form > label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700; }
+.canvas-create-form > div { gap: 8px; }
+.canvas-create-form input { flex: 1; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid #cfd4cf; border-radius: 8px; }
+.canvas-create-form button,
+.canvas-library-actions button { min-height: 34px; padding: 0 11px; border: 1px solid #ccd2ce; border-radius: 7px; background: #fff; cursor: pointer; }
+.canvas-create-form button { color: #fff; border-color: #276e7c; background: #276e7c; }
+.canvas-library-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.canvas-library-row { padding: 12px; border: 1px solid #dfe2dc; border-radius: 10px; background: #fff; }
+.canvas-library-row.active { border-color: #6f9ca5; background: #f0f7f7; }
+.canvas-library-summary { gap: 8px; margin-bottom: 9px; }
+.canvas-library-summary time { margin-left: auto; color: #707a7b; font-size: 10px; }
+.active-canvas-badge { padding: 2px 6px; border-radius: 999px; color: #1e6170; background: #dcebed; font-size: 9px; font-weight: 750; text-transform: uppercase; }
+.canvas-library-actions { gap: 6px; }
+.canvas-library-actions label { flex: 1; }
+.canvas-library-actions input { width: 100%; min-width: 80px; height: 34px; padding: 0 8px; border: 1px solid #d1d5d0; border-radius: 7px; }
+.canvas-library-actions button:disabled { color: #9da4a1; cursor: default; }
+.canvas-library-actions .danger { color: #963f36; border-color: #e2c5c1; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
 @media (max-width: 880px) {
   .toolbar {
     flex-wrap: wrap;
@@ -701,6 +759,14 @@ canvas:focus-visible,
     white-space: normal;
     text-align: center;
   }
+
+  .canvas-library-row { padding: 10px; }
+  .canvas-library-summary,
+  .canvas-library-actions { align-items: stretch; flex-direction: column; }
+  .canvas-library-summary time { margin-left: 0; }
+  .canvas-library-actions label,
+  .canvas-library-actions input,
+  .canvas-library-actions button { width: 100%; }
 }
 
 @media (max-width: 760px) {

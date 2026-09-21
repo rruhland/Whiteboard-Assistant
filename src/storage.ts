@@ -2,7 +2,6 @@ import { parseBoard, serializeBoard, type BoardDocumentV3, type ParsedBoard } fr
 import { loadWorkspace, workspaceDocument } from './workspace';
 
 export const LEGACY_AUTOSAVE_KEY = 'whiteboard-assistant.board.v1';
-export const AUTOSAVE_KEY = LEGACY_AUTOSAVE_KEY;
 export const CANVAS_CATALOG_KEY = 'whiteboard-assistant.canvases.v1';
 const CANVAS_DOCUMENT_PREFIX = 'whiteboard-assistant.canvas.v1.';
 
@@ -205,42 +204,10 @@ export function deleteCanvas(
   return { catalog: cloneCatalog(candidate), document, activeChanged: true };
 }
 
-export function saveAutosave(storage: StorageLike, document: BoardDocumentV3): { ok: true } | { ok: false; error: string } {
-  try {
-    storage.setItem(LEGACY_AUTOSAVE_KEY, serializeBoard(document));
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: `Not saved: ${message(error)}` };
-  }
-}
-
-export function loadAutosave(storage: StorageLike): { document?: ParsedBoard; error?: string } {
-  try {
-    const saved = storage.getItem(LEGACY_AUTOSAVE_KEY);
-    return saved === null ? {} : { document: parseBoard(saved) };
-  } catch (error) {
-    return { error: `Autosave could not be loaded: ${message(error)}` };
-  }
-}
-
 export function readPortableBoard(json: string, current: ParsedBoard): { document: ParsedBoard; replaced: boolean; error?: string } {
   try {
     return { document: parseBoard(json), replaced: true };
   } catch (error) {
     return { document: current, replaced: false, error: `Open failed: ${message(error)}` };
   }
-}
-
-export function openPortableBoard(
-  json: string,
-  current: ParsedBoard,
-  storage: StorageLike | null,
-): { document: ParsedBoard; replaced: boolean; error?: string } {
-  const opened = readPortableBoard(json, current);
-  if (!opened.replaced) return opened;
-  if (!storage) return { ...opened, error: 'Not saved: local storage is unavailable' };
-  const stateDocument = opened.document.sourceVersion === 3 ? opened.document.document : null;
-  if (!stateDocument) return opened;
-  const saved = saveAutosave(storage, stateDocument);
-  return saved.ok ? opened : { ...opened, error: saved.error };
 }

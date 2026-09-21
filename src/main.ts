@@ -3,8 +3,9 @@ import { getUnassignedVisibleStrokes, projectGraph } from './association';
 import { AssistantPanel, visiblePreviewStrokes } from './assistant-panel';
 import { afterWorkspaceMutation, approveAssistantProposal, createAssistantSession, deleteAnnotation, generateAssistantSession, hasAssistantCandidate, regenerateAssistantSlot, rejectAssistantProposal, setProposalVisibility, type AssistantSession, type WorkspaceMutation } from './assistant-session';
 import { type Point } from './board';
+import { CanvasLibraryPanel } from './canvas-library-panel';
 import { CanvasRenderer } from './canvas';
-import { serializeBoard } from './document';
+import { serializeBoard, type BoardDocumentV3 } from './document';
 import { screenToWorld, hitTestStroke, hitTestStrokesAlongSegment, zoomAt } from './geometry';
 import {
   beginGesture,
@@ -16,7 +17,7 @@ import {
 import { effectivePointerTool, isSpacePanTarget, type Tool } from './input';
 import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
 import { containedStrokeIds, hitSelectionHandle, mergeSelection, selectionBounds, type SelectionOperation } from './selection';
-import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
+import { createCanvas, deleteCanvas, initializeCanvasLibrary, openCanvas, readPortableBoard, renameCanvas, saveActiveCanvas, type CanvasCatalogV1, type StorageLike } from './storage';
 import { buildActivitySamples } from './temporal';
 import { TimelinePanel } from './timeline-panel';
 import { beginTouch, endTouch, touchViewport, updateTouch, type TouchNavigation } from './touch-navigation';
@@ -52,6 +53,10 @@ const historicalStatus = element<HTMLElement>('#historical-status');
 const assistantToggle = element<HTMLButtonElement>('#assistant-toggle');
 const assistantPanelRoot = element<HTMLElement>('#assistant-panel');
 const assistantPanelBackdrop = element<HTMLButtonElement>('#assistant-panel-backdrop');
+const canvasesToggle = element<HTMLButtonElement>('#canvases-toggle');
+const resetPageButton = element<HTMLButtonElement>('#reset-page');
+const canvasLibraryRoot = element<HTMLElement>('#canvas-library');
+const canvasLibraryBackdrop = element<HTMLButtonElement>('#canvas-library-backdrop');
 
 let workspace: WorkspaceState = loadWorkspace({
   sourceVersion: 3,
@@ -69,6 +74,9 @@ let navigationSaveTimer = 0;
 let cachedEventCount = 0;
 let hasDrawn = false;
 let storage: StorageLike | null = null;
+let canvasCatalog: CanvasCatalogV1 = { version: 1, activeCanvasId: 'memory', canvases: [{ id: 'memory', name: 'Untitled canvas', createdAt: Date.now(), updatedAt: Date.now() }] };
+let canvasLibraryOpen = false;
+let canvasLibraryStatus = '';
 let objectPanelOpen = false;
 let overlayEnabled = true;
 let checkedObjectIds = new Set<string>();
@@ -80,15 +88,14 @@ let assistantSession: AssistantSession = createAssistantSession();
 
 try {
   storage = window.localStorage;
-  const restored = loadAutosave(storage);
-  if (restored.document) {
-    workspace = loadWorkspace(restored.document);
-    if (workspace.migratedFromVersion !== null) saveAutosave(storage, workspaceDocument(workspace));
-    saveStatus.textContent = workspace.migratedFromVersion !== null ? 'Restored and upgraded autosave' : 'Restored autosave';
-  } else if (restored.error) {
-    saveStatus.textContent = restored.error;
+  const identity = { id: globalThis.crypto.randomUUID(), now: Date.now() };
+  const library = initializeCanvasLibrary(storage, identity);
+  canvasCatalog = library.catalog;
+  workspace = loadWorkspace({ sourceVersion: 3, document: library.activeDocument });
+  if (library.notice) {
+    saveStatus.textContent = library.notice;
     saveStatus.dataset.state = 'error';
-  }
+  } else saveStatus.textContent = 'Restored active canvas';
 } catch (error) {
   saveStatus.textContent = `Autosave unavailable: ${error instanceof Error ? error.message : String(error)}`;
   saveStatus.dataset.state = 'error';
@@ -123,6 +130,39 @@ function displayBoard() { return historySession.projection?.board ?? workspace.b
 function displayAssociations() { return historySession.projection?.associations ?? workspace.associations; }
 function liveDisplayViewport() { return isHistorical() ? historySession.historicalViewport : workspace.viewport; }
 function displayViewport() { return touchNavigation ? touchViewport(touchNavigation) : liveDisplayViewport(); }
+
+function blankDocument(): BoardDocumentV3 {
+  return { version: 3, events: [], associationEvents: [], viewport: { x: 0, y: 0, zoom: 1 } };
+}
+
+function activeCanvasName(): string {
+  return canvasCatalog.canvases.find(({ id }) => id === canvasCatalog.activeCanvasId)?.name ?? 'Untitled canvas';
+}
+
+function replaceWorkspace(document: BoardDocumentV3): void {
+  cancelActiveGesture();
+  if (touchNavigation) {
+    for (const id of touchNavigation.contacts.keys()) {
+      if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    }
+  }
+  touchNavigation = null;
+  suppressedTouchIds.clear();
+  penEditPointerId = null;
+  workspace = loadWorkspace({ sourceVersion: 3, document });
+  selectedIds.clear();
+  selectedObjectId = null;
+  historicalSelectedObjectId = null;
+  checkedObjectIds.clear();
+  historySession = createHistorySession(workspace);
+  assistantSession = createAssistantSession();
+  objectPanelOpen = false;
+  timelinePanelOpen = false;
+  assistantPanelOpen = false;
+  refreshCachedMetadata();
+  updateControls();
+  scheduleRender();
+}
 
 function refreshPanel(): void {
   objectsToggle.setAttribute('aria-expanded', String(objectPanelOpen));
@@ -310,6 +350,77 @@ const assistantPanel = new AssistantPanel(assistantPanelRoot, {
   },
 });
 
+function refreshCanvasLibrary(): void {
+  canvasesToggle.setAttribute('aria-expanded', String(canvasLibraryOpen));
+  canvasLibraryBackdrop.hidden = !canvasLibraryOpen;
+  canvasLibraryPanel.render({
+    open: canvasLibraryOpen,
+    activeCanvasId: canvasCatalog.activeCanvasId,
+    canvases: canvasCatalog.canvases,
+    status: canvasLibraryStatus,
+  });
+}
+
+function closeCanvasLibrary(): void {
+  canvasLibraryOpen = false;
+  refreshCanvasLibrary();
+  canvasesToggle.focus();
+}
+
+function canvasLibraryError(error: unknown): void {
+  canvasLibraryStatus = error instanceof Error ? error.message : String(error);
+  setStatus(canvasLibraryStatus, 'error');
+  refreshCanvasLibrary();
+}
+
+const canvasLibraryPanel = new CanvasLibraryPanel(canvasLibraryRoot, {
+  onClose: closeCanvasLibrary,
+  onCreate(name) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    try {
+      const created = createCanvas(storage, canvasCatalog, name, { id: globalThis.crypto.randomUUID(), now: Date.now() });
+      canvasCatalog = created.catalog;
+      replaceWorkspace(created.document);
+      canvasLibraryStatus = '';
+      closeCanvasLibrary();
+      setStatus('Canvas created and saved locally');
+    } catch (error) { canvasLibraryError(error); }
+  },
+  onOpen(id) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    try {
+      const opened = openCanvas(storage, canvasCatalog, id);
+      canvasCatalog = opened.catalog;
+      replaceWorkspace(opened.document);
+      canvasLibraryStatus = '';
+      closeCanvasLibrary();
+      setStatus('Canvas opened');
+    } catch (error) { canvasLibraryError(error); }
+  },
+  onRename(id, name) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    try {
+      canvasCatalog = renameCanvas(storage, canvasCatalog, id, name, Date.now());
+      canvasLibraryStatus = 'Canvas renamed';
+      setStatus('Canvas renamed');
+      refreshCanvasLibrary();
+    } catch (error) { canvasLibraryError(error); }
+  },
+  onDelete(id) {
+    if (!storage) { canvasLibraryError('Canvas library is unavailable'); return; }
+    const summary = canvasCatalog.canvases.find((canvas) => canvas.id === id);
+    if (!summary || !window.confirm(`Delete “${summary.name}” and its complete history?`)) return;
+    try {
+      const deleted = deleteCanvas(storage, canvasCatalog, id, { id: globalThis.crypto.randomUUID(), now: Date.now() });
+      canvasCatalog = deleted.catalog;
+      if (deleted.activeChanged && deleted.document) replaceWorkspace(deleted.document);
+      canvasLibraryStatus = 'Canvas deleted';
+      setStatus('Canvas deleted');
+      refreshCanvasLibrary();
+    } catch (error) { canvasLibraryError(error); }
+  },
+});
+
 function refreshCachedMetadata(): void {
   cachedEventCount = workspace.board.events.length;
   hasDrawn = workspace.board.events.some((event) => event.kind === 'add');
@@ -363,6 +474,7 @@ function updateControls(): void {
   redoButton.disabled = isHistorical() || !workspace.board.canRedo;
   openButton.disabled = isHistorical();
   saveButton.disabled = isHistorical();
+  resetPageButton.disabled = isHistorical();
   assistantToggle.disabled = isHistorical();
   colorInput.disabled = isHistorical();
   widthInput.disabled = isHistorical();
@@ -381,6 +493,7 @@ function updateControls(): void {
   timelinePanel.render({ index: historySession.index, open: timelinePanelOpen, position: historySession.position, heatmapEnabled: historySession.heatmapEnabled });
   refreshPanel();
   refreshAssistantPanel();
+  refreshCanvasLibrary();
 }
 
 function setStatus(message: string, state: 'normal' | 'error' = 'normal'): void {
@@ -394,9 +507,11 @@ function persist(): boolean {
     setStatus('Not saved: local storage is unavailable', 'error');
     return false;
   }
-  const result = saveAutosave(storage, currentDocument());
+  const result = saveActiveCanvas(storage, canvasCatalog, currentDocument(), Date.now());
   if (result.ok) {
+    canvasCatalog = result.catalog;
     setStatus('Saved locally');
+    if (canvasLibraryOpen) refreshCanvasLibrary();
     return true;
   }
   setStatus(result.error, 'error');
@@ -694,6 +809,28 @@ element<HTMLButtonElement>('#reset-view').addEventListener('click', () => {
   if (!isHistorical()) persistNavigationSoon();
 });
 
+canvasesToggle.addEventListener('click', () => {
+  cancelActiveGesture();
+  if (touchNavigation) {
+    applyNavigationViewport(touchViewport(touchNavigation));
+    touchNavigation = null;
+  }
+  objectPanelOpen = false;
+  timelinePanelOpen = false;
+  assistantPanelOpen = false;
+  canvasLibraryOpen = true;
+  canvasLibraryStatus = '';
+  updateControls();
+  canvasLibraryPanel.focusEntry();
+});
+canvasLibraryBackdrop.addEventListener('click', closeCanvasLibrary);
+resetPageButton.addEventListener('click', () => {
+  if (isHistorical()) return;
+  if (!window.confirm(`Reset “${activeCanvasName()}”? This permanently clears its canvas, objects, and complete history.`)) return;
+  replaceWorkspace(blankDocument());
+  if (persist()) setStatus('Canvas reset');
+});
+
 saveButton.addEventListener('click', () => {
   if (isHistorical()) return;
   cancelActiveGesture();
@@ -718,29 +855,26 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
   if (!file) return;
   try {
-    const result = openPortableBoard(await file.text(), { sourceVersion: 3, document: currentDocument() }, storage);
+    const result = readPortableBoard(await file.text(), { sourceVersion: 3, document: currentDocument() });
     if (!result.replaced) {
       setStatus(result.error ?? 'Open failed', 'error');
       return;
     }
-    workspace = loadWorkspace(result.document);
-    historySession = createHistorySession(workspace);
-    assistantSession = createAssistantSession();
-    assistantPanelOpen = false;
-    selectedIds.clear();
-    selectedObjectId = null;
-    checkedObjectIds.clear();
-    refreshCachedMetadata();
-    updateControls();
-    scheduleRender();
-    if (result.error) setStatus(result.error, 'error');
-    else if (persist()) setStatus(workspace.migratedFromVersion !== null ? 'Board opened, upgraded, and saved locally' : 'Board opened and saved locally');
+    const sourceVersion = result.document.sourceVersion;
+    const document = workspaceDocument(loadWorkspace(result.document));
+    replaceWorkspace(document);
+    if (persist()) setStatus(sourceVersion === 3 ? 'Board opened and saved to active canvas' : 'Board opened, upgraded, and saved to active canvas');
   } catch (error) {
     setStatus(`Open failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
   }
 });
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && canvasLibraryOpen) {
+    event.preventDefault();
+    closeCanvasLibrary();
+    return;
+  }
   if (event.key === 'Escape' && isHistorical()) {
     event.preventDefault();
     showNow();
