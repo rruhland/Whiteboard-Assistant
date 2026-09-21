@@ -30,7 +30,9 @@ describe('temporal queries', () => {
 
   test('region query excludes erased strokes unless explicitly requested', () => {
     const fixture = objectRegionFixture();
-    expect(queryRegionHistory(fixture.document, fixture.index, fixture.region).strokeIds).not.toContain(fixture.erasedId);
+    const ordinary = queryRegionHistory(fixture.document, fixture.index, fixture.region);
+    expect(ordinary.strokeIds).not.toContain(fixture.erasedId);
+    expect(ordinary.erasedStrokeIds).toEqual([]);
     const withErased = queryRegionHistory(fixture.document, fixture.index, fixture.region, { includeErased: true, detail: 'geometry' });
     expect(withErased.erasedStrokeIds).toContain(fixture.erasedId);
     expect(withErased.strokes?.map(({ id }) => id)).toContain(fixture.erasedId);

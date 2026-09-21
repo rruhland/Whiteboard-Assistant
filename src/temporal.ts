@@ -327,7 +327,7 @@ export function queryRegionHistory(
     if (matches) matchingEntries.push(entry);
   }
   const allMatches = [...snapshots.keys()];
-  const erasedStrokeIds = uniqueSorted(allMatches.filter((id) => !visible.has(id)));
+  const erasedStrokeIds = options.includeErased ? uniqueSorted(allMatches.filter((id) => !visible.has(id))) : [];
   const strokeIds = uniqueSorted(allMatches.filter((id) => visible.has(id) || options.includeErased));
   return {
     bounds: structuredClone(bounds),
