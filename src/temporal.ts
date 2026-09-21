@@ -147,6 +147,9 @@ export function projectHistory(document: BoardDocumentV2, index: TemporalIndex, 
     throw new Error(`History position must be an integer from 0 to ${index.entries.length}`);
   }
   const entry = position === 0 ? null : index.entries[position - 1];
+  if (entry && (entry.inkEventCount < 0 || entry.inkEventCount > document.events.length || entry.associationEventCount < 0 || entry.associationEventCount > document.associationEvents.length)) {
+    throw new Error(`History position ${position} has invalid prefix counts`);
+  }
   const inkEvents = document.events.slice(0, entry?.inkEventCount ?? 0);
   const associationEvents = document.associationEvents.slice(0, entry?.associationEventCount ?? 0);
   const knownStrokeIds = new Set(inkEvents.flatMap(strokeIds));

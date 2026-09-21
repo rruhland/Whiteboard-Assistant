@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-milestone-1c-design.md`
 
+**Implementation status:** Completed on `feat/milestone-1c`; automated and production-browser evidence is recorded in `docs/milestone-1c-verification.md`.
+
 ## Global Constraints
 
 - Keep the portable board format at version 2; all temporal indexes, projections, query summaries, and heat samples are derived and never serialized.

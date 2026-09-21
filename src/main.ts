@@ -14,7 +14,9 @@ import {
 import { isSpacePanTarget } from './input';
 import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
 import { loadAutosave, openPortableBoard, saveAutosave, type StorageLike } from './storage';
-import { commitStroke, loadWorkspace, workspaceDocument, type WorkspaceState } from './workspace';
+import { buildActivitySamples } from './temporal';
+import { TimelinePanel } from './timeline-panel';
+import { commitStroke, createHistorySession, loadWorkspace, rebuildHistorySession, returnToNow, selectHistoryPosition, workspaceDocument, type HistorySession, type WorkspaceState } from './workspace';
 
 type Tool = 'pen' | 'select' | 'eraser' | 'hand';
 
@@ -42,6 +44,9 @@ const onboarding = element<HTMLElement>('#onboarding');
 const objectsToggle = element<HTMLButtonElement>('#objects-toggle');
 const objectPanelRoot = element<HTMLElement>('#object-panel');
 const objectPanelBackdrop = element<HTMLButtonElement>('#object-panel-backdrop');
+const historyToggle = element<HTMLButtonElement>('#history-toggle');
+const timelinePanelRoot = element<HTMLElement>('#timeline-panel');
+const historicalStatus = element<HTMLElement>('#historical-status');
 
 let workspace: WorkspaceState = loadWorkspace({
   sourceVersion: 2,
@@ -60,6 +65,7 @@ let objectPanelOpen = false;
 let overlayEnabled = true;
 let checkedObjectIds = new Set<string>();
 let selectedObjectId: string | null = null;
+let timelinePanelOpen = false;
 
 try {
   storage = window.localStorage;
@@ -82,17 +88,25 @@ function currentDocument() {
 }
 
 function panelState(): ObjectPanelState {
-  const graph = projectGraph(workspace.associations, workspace.board.strokes);
+  const board = displayBoard();
+  const associations = displayAssociations();
+  const graph = projectGraph(associations, board.strokes);
   return {
     ...graph,
-    selectedStrokeId: selectedId,
+    selectedStrokeId: isHistorical() ? null : selectedId,
     selectedObjectId,
     checkedObjectIds,
     overlayEnabled,
-    unassignedStrokeIds: getUnassignedVisibleStrokes(workspace.associations, workspace.board.strokes).map(({ id }) => id),
-    readOnly: false,
+    unassignedStrokeIds: getUnassignedVisibleStrokes(associations, board.strokes).map(({ id }) => id),
+    readOnly: isHistorical(),
   };
 }
+
+let historySession: HistorySession = createHistorySession(workspace);
+function isHistorical(): boolean { return historySession.position !== null; }
+function displayBoard() { return historySession.projection?.board ?? workspace.board; }
+function displayAssociations() { return historySession.projection?.associations ?? workspace.associations; }
+function displayViewport() { return isHistorical() ? historySession.historicalViewport : workspace.viewport; }
 
 function refreshPanel(): void {
   objectsToggle.setAttribute('aria-expanded', String(objectPanelOpen));
@@ -111,12 +125,14 @@ function finishAssociationCorrection(message: string): void {
   const activeIds = new Set(workspace.associations.objects.filter(({ status }) => status === 'active').map(({ id }) => id));
   checkedObjectIds = new Set([...checkedObjectIds].filter((id) => activeIds.has(id)));
   objectPanel.setStatus(message);
+  rebuildHistory();
   updateControls();
   scheduleRender();
   persist();
 }
 
 function correction(action: () => string | readonly [string, string], success: string): void {
+  if (isHistorical()) return;
   try {
     action();
     finishAssociationCorrection(success);
@@ -162,9 +178,48 @@ const objectPanel = new ObjectPanel(objectPanelRoot, {
   onSelectObject(id) { selectedObjectId = id; refreshPanel(); scheduleRender(); },
 });
 
+function enterHistoryPosition(position: number): void {
+  cancelActiveGesture();
+  try {
+    historySession = selectHistoryPosition(workspace, historySession, position);
+    activeTool = 'hand';
+    canvas.dataset.tool = activeTool;
+    updateControls();
+    scheduleRender();
+  } catch (error) {
+    historySession = returnToNow(workspace, historySession);
+    setStatus(`History unavailable: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    updateControls();
+    scheduleRender();
+  }
+}
+
+function showNow(): void {
+  cancelActiveGesture();
+  historySession = returnToNow(workspace, historySession);
+  updateControls();
+  scheduleRender();
+}
+
+const timelinePanel = new TimelinePanel(timelinePanelRoot, {
+  onClose() { timelinePanelOpen = false; updateControls(); historyToggle.focus(); },
+  onSelectPosition: enterHistoryPosition,
+  onReturnToNow: showNow,
+  onToggleHeatmap(enabled) { historySession = { ...historySession, heatmapEnabled: enabled }; updateControls(); scheduleRender(); },
+});
+
 function refreshCachedMetadata(): void {
   cachedEventCount = workspace.board.events.length;
   hasDrawn = workspace.board.events.some((event) => event.kind === 'add');
+}
+
+function rebuildHistory(): void {
+  try {
+    historySession = rebuildHistorySession(workspace, historySession);
+  } catch (error) {
+    historySession = returnToNow(workspace, historySession);
+    setStatus(`History unavailable: ${error instanceof Error ? error.message : String(error)}`, 'error');
+  }
 }
 
 refreshCachedMetadata();
@@ -173,36 +228,48 @@ function scheduleRender(): void {
   if (renderFrame) return;
   renderFrame = window.requestAnimationFrame(() => {
     renderFrame = 0;
-    const graph = projectGraph(workspace.associations, workspace.board.strokes);
+    const board = displayBoard();
+    const associations = displayAssociations();
+    const graph = projectGraph(associations, board.strokes);
     const selectedObject = graph.nodes.find(({ id }) => id === selectedObjectId);
     const objectOverlays: ObjectOverlay[] = overlayEnabled ? graph.nodes
       .filter((node) => node.status === 'active' && node.bounds)
       .map((node) => ({ id: node.id, label: node.label, bounds: node.bounds!, selected: node.id === selectedObjectId, color: node.id === selectedObjectId ? '#c66c28' : '#4d8790' })) : [];
     renderer.render({
-      strokes: workspace.board.strokes,
-      viewport: workspace.viewport,
-      selectedId,
+      strokes: board.strokes,
+      viewport: displayViewport(),
+      selectedId: isHistorical() ? null : selectedId,
       gesture: activeGesture,
       inkColor: colorInput.value,
       inkWidth: Number(widthInput.value),
       objectOverlays,
       selectedObjectStrokeIds: new Set(selectedObject?.strokeIds ?? []),
-      activitySamples: [],
+      activitySamples: isHistorical() && historySession.heatmapEnabled && historySession.position !== null
+        ? buildActivitySamples(currentDocument(), historySession.index, historySession.position)
+        : [],
     });
   });
 }
 
 function updateControls(): void {
-  const strokes = workspace.board.strokes;
+  const strokes = displayBoard().strokes;
   strokeCount.textContent = String(strokes.length);
   editCount.textContent = String(cachedEventCount);
-  zoomLevel.textContent = `${Math.round(workspace.viewport.zoom * 100)}%`;
-  undoButton.disabled = !workspace.board.canUndo;
-  redoButton.disabled = !workspace.board.canRedo;
+  zoomLevel.textContent = `${Math.round(displayViewport().zoom * 100)}%`;
+  undoButton.disabled = isHistorical() || !workspace.board.canUndo;
+  redoButton.disabled = isHistorical() || !workspace.board.canRedo;
+  openButton.disabled = isHistorical();
+  saveButton.disabled = isHistorical();
+  colorInput.disabled = isHistorical();
+  widthInput.disabled = isHistorical();
   onboarding.hidden = hasDrawn;
   document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => {
     button.setAttribute('aria-pressed', String(button.dataset.tool === activeTool));
+    button.disabled = isHistorical() && button.dataset.tool !== 'hand';
   });
+  historicalStatus.hidden = !isHistorical();
+  historyToggle.setAttribute('aria-expanded', String(timelinePanelOpen));
+  timelinePanel.render({ index: historySession.index, open: timelinePanelOpen, position: historySession.position, heatmapEnabled: historySession.heatmapEnabled });
   refreshPanel();
 }
 
@@ -234,6 +301,7 @@ function persistNavigationSoon(): void {
 function afterEdit(): void {
   refreshCachedMetadata();
   if (selectedId && !workspace.board.strokes.some((stroke) => stroke.id === selectedId)) selectedId = null;
+  rebuildHistory();
   updateControls();
   scheduleRender();
   persist();
@@ -248,6 +316,7 @@ function cancelActiveGesture(): void {
 }
 
 function setTool(tool: Tool): void {
+  if (isHistorical() && tool !== 'hand') return;
   cancelActiveGesture();
   activeTool = tool;
   canvas.dataset.tool = tool;
@@ -261,17 +330,18 @@ function screenPoint(event: PointerEvent | WheelEvent): { x: number; y: number }
 }
 
 function worldPoint(event: PointerEvent): Point {
-  const world = screenToWorld(screenPoint(event), workspace.viewport);
+  const world = screenToWorld(screenPoint(event), displayViewport());
   return { ...world, pressure: event.pressure, time: Date.now() };
 }
 
 function hitAt(world: Point): string | undefined {
-  return hitTestStroke(workspace.board.strokes, world, 7 / workspace.viewport.zoom)?.id;
+  return hitTestStroke(displayBoard().strokes, world, 7 / displayViewport().zoom)?.id;
 }
 
 function startPointer(event: PointerEvent): void {
   if (activeGesture || (event.button !== 0 && event.button !== 1)) return;
   const effectiveTool: Tool = event.button === 1 || spacePressed ? 'hand' : activeTool;
+  if (isHistorical() && effectiveTool !== 'hand') { event.preventDefault(); return; }
   const screen = screenPoint(event);
   const world = worldPoint(event);
   let next: Gesture | null = null;
@@ -279,7 +349,7 @@ function startPointer(event: PointerEvent): void {
   if (effectiveTool === 'pen' && event.button === 0) {
     next = { type: 'ink', pointerId: event.pointerId, points: [world] };
   } else if (effectiveTool === 'hand') {
-    next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...workspace.viewport } };
+    next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...displayViewport() } };
   } else if (effectiveTool === 'select' && event.button === 0) {
     const strokeId = hitAt(world);
     selectedId = strokeId ?? null;
@@ -306,10 +376,10 @@ function movePointer(event: PointerEvent): void {
   } else if (activeGesture.type === 'erase') {
     const world = worldPoint(event);
     const strokeIds = hitTestStrokesAlongSegment(
-      workspace.board.strokes,
+      displayBoard().strokes,
       activeGesture.current,
       world,
-      7 / workspace.viewport.zoom,
+      7 / displayViewport().zoom,
       new Set(activeGesture.strokeIds),
     ).map(({ id }) => id);
     activeGesture = updateGesture(activeGesture, event.pointerId, { world, erasedStrokeIds: strokeIds });
@@ -344,29 +414,34 @@ function endPointer(event: PointerEvent): void {
     if (commit.strokeIds.length) afterEdit();
     else scheduleRender();
   } else {
-    workspace.viewport = commit.viewport;
+    if (isHistorical()) historySession = { ...historySession, historicalViewport: commit.viewport };
+    else workspace.viewport = commit.viewport;
     updateControls();
     scheduleRender();
-    persistNavigationSoon();
+    if (!isHistorical()) persistNavigationSoon();
   }
 }
 
 function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
   cancelActiveGesture();
   const bounds = canvas.getBoundingClientRect();
-  workspace.viewport = zoomAt(workspace.viewport, anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
+  const viewport = zoomAt(displayViewport(), anchor ?? { x: bounds.width / 2, y: bounds.height / 2 }, factor);
+  if (isHistorical()) historySession = { ...historySession, historicalViewport: viewport };
+  else workspace.viewport = viewport;
   updateControls();
   scheduleRender();
-  persistNavigationSoon();
+  if (!isHistorical()) persistNavigationSoon();
 }
 
 function undo(): void {
+  if (isHistorical()) return;
   cancelActiveGesture();
   workspace.board.undo();
   afterEdit();
 }
 
 function redo(): void {
+  if (isHistorical()) return;
   cancelActiveGesture();
   workspace.board.redo();
   afterEdit();
@@ -405,13 +480,15 @@ element<HTMLButtonElement>('#zoom-out').addEventListener('click', () => changeZo
 element<HTMLButtonElement>('#zoom-in').addEventListener('click', () => changeZoom(1.2));
 element<HTMLButtonElement>('#reset-view').addEventListener('click', () => {
   cancelActiveGesture();
-  workspace.viewport = { x: 0, y: 0, zoom: 1 };
+  if (isHistorical()) historySession = { ...historySession, historicalViewport: { x: 0, y: 0, zoom: 1 } };
+  else workspace.viewport = { x: 0, y: 0, zoom: 1 };
   updateControls();
   scheduleRender();
-  persistNavigationSoon();
+  if (!isHistorical()) persistNavigationSoon();
 });
 
 saveButton.addEventListener('click', () => {
+  if (isHistorical()) return;
   cancelActiveGesture();
   const blob = new Blob([serializeBoard(currentDocument())], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -424,10 +501,12 @@ saveButton.addEventListener('click', () => {
 });
 
 openButton.addEventListener('click', () => {
+  if (isHistorical()) return;
   cancelActiveGesture();
   fileInput.click();
 });
 fileInput.addEventListener('change', async () => {
+  if (isHistorical()) { fileInput.value = ''; return; }
   const file = fileInput.files?.[0];
   fileInput.value = '';
   if (!file) return;
@@ -438,6 +517,7 @@ fileInput.addEventListener('change', async () => {
       return;
     }
     workspace = loadWorkspace(result.document);
+    historySession = createHistorySession(workspace);
     selectedId = null;
     selectedObjectId = null;
     checkedObjectIds.clear();
@@ -452,6 +532,18 @@ fileInput.addEventListener('change', async () => {
 });
 
 window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && isHistorical()) {
+    event.preventDefault();
+    showNow();
+    return;
+  }
+  if (event.key === 'Escape' && timelinePanelOpen) {
+    event.preventDefault();
+    timelinePanelOpen = false;
+    updateControls();
+    historyToggle.focus();
+    return;
+  }
   if (isEditable(event.target)) return;
   if (event.key === 'Escape' && objectPanelOpen) {
     event.preventDefault();
@@ -471,6 +563,13 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (command || event.altKey) return;
+  if (timelinePanelOpen && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    event.preventDefault();
+    const current = historySession.position ?? historySession.index.entries.length + 1;
+    if (event.key === 'ArrowLeft' && historySession.index.entries.length > 0) enterHistoryPosition(Math.max(0, Math.min(historySession.index.entries.length, current - 1)));
+    if (event.key === 'ArrowRight' && isHistorical()) enterHistoryPosition(Math.min(historySession.index.entries.length, (historySession.position ?? 0) + 1));
+    return;
+  }
   if (event.code === 'Space') {
     if (!isSpacePanTarget(event.target, canvas, document.body)) return;
     spacePressed = true;
@@ -483,6 +582,7 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     setTool(tool);
   } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId) {
+    if (isHistorical()) return;
     event.preventDefault();
     cancelActiveGesture();
     workspace.board.eraseStroke(selectedId);
@@ -501,8 +601,15 @@ window.addEventListener('blur', () => {
 new ResizeObserver(scheduleRender).observe(canvas);
 objectsToggle.addEventListener('click', () => {
   objectPanelOpen = !objectPanelOpen;
-  refreshPanel();
+  if (objectPanelOpen && window.innerWidth < 760) timelinePanelOpen = false;
+  updateControls();
   if (objectPanelOpen) objectPanelRoot.querySelector<HTMLElement>('button, input')?.focus();
+});
+historyToggle.addEventListener('click', () => {
+  timelinePanelOpen = !timelinePanelOpen;
+  if (timelinePanelOpen && window.innerWidth < 760) objectPanelOpen = false;
+  updateControls();
+  if (timelinePanelOpen) timelinePanel.focusHeading();
 });
 objectPanelBackdrop.addEventListener('click', closeObjectPanel);
 canvas.dataset.tool = activeTool;
