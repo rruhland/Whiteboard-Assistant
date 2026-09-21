@@ -94,6 +94,7 @@ describe('canvas library persistence', () => {
     expect(() => createCanvas(storage, library.catalog, '   ', { id: 'b', now: 2 })).toThrow(/name/i);
     storage.setItem(canvasDocumentKey('broken'), '{broken');
     const catalog = { ...library.catalog, canvases: [...library.catalog.canvases, { id: 'broken', name: 'Broken', createdAt: 2, updatedAt: 2 }] };
+    storage.setItem(CANVAS_CATALOG_KEY, JSON.stringify(catalog));
     expect(() => openCanvas(storage, catalog, 'broken')).toThrow(/JSON|document/i);
     expect(catalog.activeCanvasId).toBe('a');
   });
@@ -105,6 +106,38 @@ describe('canvas library persistence', () => {
     expect(result.activeDocument.events).toEqual([]);
     expect(result.notice).toMatch(/could not be loaded/i);
     expect(storage.getItem(CANVAS_CATALOG_KEY)).toBe('{broken');
+    expect(saveActiveCanvas(storage, result.catalog, empty, 10)).toMatchObject({ ok: false });
+    expect(storage.getItem(CANVAS_CATALOG_KEY)).toBe('{broken');
+  });
+
+  test('retains a valid catalog when its active document is malformed', () => {
+    const catalog: CanvasCatalogV1 = { version: 1, activeCanvasId: 'broken', canvases: [summary('healthy', 'Healthy', 2), summary('broken', 'Broken', 3)] };
+    const storage = memoryStorage({
+      [CANVAS_CATALOG_KEY]: JSON.stringify(catalog),
+      [canvasDocumentKey('healthy')]: JSON.stringify(filledDocument),
+      [canvasDocumentKey('broken')]: '{broken',
+    });
+    const library = initializeCanvasLibrary(storage, { id: 'recovery', now: 9 });
+    expect(library.catalog).toEqual({ ...catalog, canvases: [summary('broken', 'Broken', 3), summary('healthy', 'Healthy', 2)] });
+    expect(library.activeDocument).toEqual(empty);
+    expect(library.notice).toMatch(/document/i);
+    const saved = saveActiveCanvas(storage, library.catalog, empty, 10);
+    expect(saved.ok).toBe(true);
+    expect(JSON.parse(storage.getItem(CANVAS_CATALOG_KEY)!)).toMatchObject({ canvases: expect.arrayContaining([expect.objectContaining({ id: 'healthy' }), expect.objectContaining({ id: 'broken' })]) });
+  });
+
+  test('merges stale-tab saves and mutations with the latest stored catalog', () => {
+    const storage = memoryStorage();
+    const first = initializeCanvasLibrary(storage, { id: 'a', now: 1 });
+    const stale = initializeCanvasLibrary(storage, { id: 'unused', now: 2 }).catalog;
+    createCanvas(storage, first.catalog, 'B', { id: 'b', now: 3 });
+
+    const saved = saveActiveCanvas(storage, stale, filledDocument, 4);
+    expect(saved.ok && saved.catalog.canvases.map(({ id }) => id).sort()).toEqual(['a', 'b']);
+    const renamed = renameCanvas(storage, stale, 'a', 'Renamed A', 5);
+    expect(renamed.canvases.map(({ id }) => id).sort()).toEqual(['a', 'b']);
+    const deleted = deleteCanvas(storage, stale, 'a', { id: 'unused', now: 6 });
+    expect(deleted.catalog.canvases.map(({ id }) => id)).toEqual(['b']);
   });
 
   test.each([1, 2])('does not publish created catalog state when staged write %s fails', (failOnSet) => {

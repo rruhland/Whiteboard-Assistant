@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { beginTouch, endTouch, touchViewport, updateTouch } from '../src/touch-navigation';
+import { abandonTouch, beginTouch, endTouch, touchViewport, updateTouch } from '../src/touch-navigation';
 
 describe('touch navigation', () => {
   test('pans with one finger from the captured origin viewport', () => {
@@ -33,5 +33,11 @@ describe('touch navigation', () => {
     state = beginTouch(state, 3, { x: 999, y: 999 }, touchViewport(state));
     state = updateTouch(state, 2, { x: 100, y: 0 });
     expect(touchViewport(state).zoom).toBe(4);
+  });
+
+  test('abandons an in-progress historical gesture without publishing its viewport', () => {
+    let state = beginTouch(null, 4, { x: 0, y: 0 }, { x: 10, y: 20, zoom: 1 });
+    state = updateTouch(state, 4, { x: 40, y: 60 });
+    expect(abandonTouch(state)).toEqual({ pointerIds: [4], navigation: null });
   });
 });

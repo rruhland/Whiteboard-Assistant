@@ -60,6 +60,11 @@ function writeCatalog(storage: StorageLike, catalog: CanvasCatalogV1): void {
   storage.setItem(CANVAS_CATALOG_KEY, JSON.stringify(cloneCatalog(catalog)));
 }
 
+function latestCatalog(storage: StorageLike, fallback: CanvasCatalogV1): CanvasCatalogV1 {
+  const raw = storage.getItem(CANVAS_CATALOG_KEY);
+  return raw === null ? cloneCatalog(fallback) : parseCatalog(raw);
+}
+
 function version3(parsed: ParsedBoard): BoardDocumentV3 {
   return parsed.sourceVersion === 3 ? parsed.document : workspaceDocument(loadWorkspace(parsed));
 }
@@ -85,11 +90,16 @@ export function canvasDocumentKey(id: string): string {
 export function initializeCanvasLibrary(storage: StorageLike, identity: { id: string; now: number }): CanvasLibrary {
   const rawCatalog = storage.getItem(CANVAS_CATALOG_KEY);
   if (rawCatalog !== null) {
+    let catalog: CanvasCatalogV1;
     try {
-      const catalog = parseCatalog(rawCatalog);
-      return { catalog, activeDocument: readDocument(storage, catalog.activeCanvasId) };
+      catalog = parseCatalog(rawCatalog);
     } catch (error) {
       return recovery(identity, `Canvas library could not be loaded: ${message(error)}`);
+    }
+    try {
+      return { catalog, activeDocument: readDocument(storage, catalog.activeCanvasId) };
+    } catch (error) {
+      return { catalog, activeDocument: blankDocument(), notice: `Active canvas document could not be loaded: ${message(error)}` };
     }
   }
 
@@ -124,11 +134,13 @@ export function saveActiveCanvas(
   now: number,
 ): { ok: true; catalog: CanvasCatalogV1 } | { ok: false; error: string } {
   try {
+    const current = latestCatalog(storage, catalog);
+    if (!current.canvases.some(({ id }) => id === catalog.activeCanvasId)) throw new Error('Active canvas no longer exists');
     storage.setItem(canvasDocumentKey(catalog.activeCanvasId), serializeBoard(document));
     const candidate: CanvasCatalogV1 = {
       version: 1,
       activeCanvasId: catalog.activeCanvasId,
-      canvases: catalog.canvases.map((summary) => summary.id === catalog.activeCanvasId ? { ...summary, updatedAt: now } : { ...summary }),
+      canvases: current.canvases.map((summary) => summary.id === catalog.activeCanvasId ? { ...summary, updatedAt: now } : { ...summary }),
     };
     writeCatalog(storage, candidate);
     return { ok: true, catalog: cloneCatalog(candidate) };
@@ -143,12 +155,13 @@ export function createCanvas(
   name: string,
   identity: { id: string; now: number },
 ): { catalog: CanvasCatalogV1; document: BoardDocumentV3 } {
-  if (catalog.canvases.some(({ id }) => id === identity.id)) throw new Error('Canvas ID already exists');
+  const current = latestCatalog(storage, catalog);
+  if (current.canvases.some(({ id }) => id === identity.id)) throw new Error('Canvas ID already exists');
   const document = blankDocument();
   const candidate: CanvasCatalogV1 = {
     version: 1,
     activeCanvasId: identity.id,
-    canvases: [...catalog.canvases.map((summary) => ({ ...summary })), { id: identity.id, name: normalizeName(name), createdAt: identity.now, updatedAt: identity.now }],
+    canvases: [...current.canvases.map((summary) => ({ ...summary })), { id: identity.id, name: normalizeName(name), createdAt: identity.now, updatedAt: identity.now }],
   };
   storage.setItem(canvasDocumentKey(identity.id), serializeBoard(document));
   writeCatalog(storage, candidate);
@@ -156,20 +169,22 @@ export function createCanvas(
 }
 
 export function renameCanvas(storage: StorageLike, catalog: CanvasCatalogV1, id: string, name: string, now: number): CanvasCatalogV1 {
-  if (!catalog.canvases.some((summary) => summary.id === id)) throw new Error('Canvas does not exist');
+  const current = latestCatalog(storage, catalog);
+  if (!current.canvases.some((summary) => summary.id === id)) throw new Error('Canvas does not exist');
   const candidate: CanvasCatalogV1 = {
     version: 1,
-    activeCanvasId: catalog.activeCanvasId,
-    canvases: catalog.canvases.map((summary) => summary.id === id ? { ...summary, name: normalizeName(name), updatedAt: now } : { ...summary }),
+    activeCanvasId: current.activeCanvasId,
+    canvases: current.canvases.map((summary) => summary.id === id ? { ...summary, name: normalizeName(name), updatedAt: now } : { ...summary }),
   };
   writeCatalog(storage, candidate);
   return cloneCatalog(candidate);
 }
 
 export function openCanvas(storage: StorageLike, catalog: CanvasCatalogV1, id: string): { catalog: CanvasCatalogV1; document: BoardDocumentV3 } {
-  if (!catalog.canvases.some((summary) => summary.id === id)) throw new Error('Canvas does not exist');
+  const current = latestCatalog(storage, catalog);
+  if (!current.canvases.some((summary) => summary.id === id)) throw new Error('Canvas does not exist');
   const document = readDocument(storage, id);
-  const candidate = { ...cloneCatalog(catalog), activeCanvasId: id };
+  const candidate = { ...cloneCatalog(current), activeCanvasId: id };
   writeCatalog(storage, candidate);
   return { catalog: cloneCatalog(candidate), document };
 }
@@ -180,11 +195,12 @@ export function deleteCanvas(
   id: string,
   replacement: { id: string; now: number },
 ): { catalog: CanvasCatalogV1; document?: BoardDocumentV3; activeChanged: boolean } {
-  if (!catalog.canvases.some((summary) => summary.id === id)) throw new Error('Canvas does not exist');
-  const activeChanged = catalog.activeCanvasId === id;
-  const remaining = ordered(catalog.canvases.filter((summary) => summary.id !== id));
+  const current = latestCatalog(storage, catalog);
+  if (!current.canvases.some((summary) => summary.id === id)) throw new Error('Canvas does not exist');
+  const activeChanged = current.activeCanvasId === id;
+  const remaining = ordered(current.canvases.filter((summary) => summary.id !== id));
   if (remaining.length) {
-    const activeCanvasId = activeChanged ? remaining[0].id : catalog.activeCanvasId;
+    const activeCanvasId = activeChanged ? remaining[0].id : current.activeCanvasId;
     const document = activeChanged ? readDocument(storage, activeCanvasId) : undefined;
     const candidate: CanvasCatalogV1 = { version: 1, activeCanvasId, canvases: remaining };
     writeCatalog(storage, candidate);

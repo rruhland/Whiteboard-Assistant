@@ -83,3 +83,7 @@ export function endTouch(state: TouchNavigation, pointerId: number): TouchNaviga
   if (contacts.size === 0) return null;
   return { contacts, originContacts: cloneContacts(contacts), originViewport };
 }
+
+export function abandonTouch(state: TouchNavigation | null): { pointerIds: number[]; navigation: null } {
+  return { pointerIds: state ? [...state.contacts.keys()] : [], navigation: null };
+}

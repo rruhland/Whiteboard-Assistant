@@ -77,10 +77,12 @@ export function hitSelectionHandle(point: Point, bounds: Bounds, zoom: number): 
   const points = selectionHandlePoints(bounds, zoom);
   const order: SelectionHandle[] = ['rotate', 'nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
   const radiusSquared = (HANDLE_HIT_SIZE / zoom) ** 2;
-  return order.find((handle) => {
+  const hits = order.map((handle, priority) => {
     const target = points[handle];
-    return (target.x - point.x) ** 2 + (target.y - point.y) ** 2 <= radiusSquared;
-  }) ?? null;
+    return { handle, priority, distance: (target.x - point.x) ** 2 + (target.y - point.y) ** 2 };
+  }).filter(({ distance }) => distance <= radiusSquared);
+  hits.sort((left, right) => left.distance - right.distance || left.priority - right.priority);
+  return hits[0]?.handle ?? null;
 }
 
 function resizeAnchor(bounds: Bounds, handle: ResizeHandle): { x: number; y: number } {

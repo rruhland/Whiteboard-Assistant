@@ -1,5 +1,7 @@
 export type Tool = 'pen' | 'select' | 'eraser' | 'hand';
 export type PointerDescriptor = { pointerType: string; button: number; buttons: number };
+export type PenContactDescriptor = { pointerType: string; pointerId: number; buttons: number; pressure: number };
+export type ModalKeyboardIntent = 'board' | 'close' | 'cycle-focus' | 'contain';
 
 export function isSpacePanTarget(target: unknown, canvas: unknown, background: unknown): boolean {
   return target === canvas || target === background;
@@ -19,4 +21,17 @@ export function effectivePointerTool(
   if (pointer.pointerType !== 'mouse') return null;
   if (pointer.button === 1 || spacePressed) return 'hand';
   return pointer.button === 0 ? activeTool : null;
+}
+
+export function penContactTransition(pointer: PenContactDescriptor, activePointerId: number | null): 'start' | 'continue' | 'end' | 'none' {
+  if (pointer.pointerType !== 'pen') return 'none';
+  const touching = pointer.pressure > 0 || (pointer.buttons & 1) !== 0;
+  if (activePointerId === pointer.pointerId) return touching ? 'continue' : 'end';
+  return activePointerId === null && touching ? 'start' : 'none';
+}
+
+export function modalKeyboardIntent(open: boolean, key: string): ModalKeyboardIntent {
+  if (!open) return 'board';
+  if (key === 'Escape') return 'close';
+  return key === 'Tab' ? 'cycle-focus' : 'contain';
 }

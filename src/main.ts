@@ -14,13 +14,13 @@ import {
   updateGesture,
   type Gesture,
 } from './gesture';
-import { effectivePointerTool, isSpacePanTarget, type Tool } from './input';
+import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition, type Tool } from './input';
 import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
 import { containedStrokeIds, hitSelectionHandle, mergeSelection, selectionBounds, type SelectionOperation } from './selection';
 import { createCanvas, deleteCanvas, initializeCanvasLibrary, openCanvas, readPortableBoard, renameCanvas, saveActiveCanvas, type CanvasCatalogV1, type StorageLike } from './storage';
 import { buildActivitySamples } from './temporal';
 import { TimelinePanel } from './timeline-panel';
-import { beginTouch, endTouch, touchViewport, updateTouch, type TouchNavigation } from './touch-navigation';
+import { abandonTouch, beginTouch, endTouch, touchViewport, updateTouch, type TouchNavigation } from './touch-navigation';
 import { commitStroke, createHistorySession, loadWorkspace, rebuildHistorySession, returnToNow, selectHistoryPosition, workspaceDocument, type HistorySession, type WorkspaceState } from './workspace';
 
 function element<T extends HTMLElement>(selector: string): T {
@@ -293,6 +293,12 @@ function enterHistoryPosition(position: number): void {
 
 function showNow(): void {
   cancelActiveGesture();
+  const abandoned = abandonTouch(touchNavigation);
+  touchNavigation = abandoned.navigation;
+  for (const id of abandoned.pointerIds) {
+    suppressedTouchIds.add(id);
+    if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+  }
   historySession = returnToNow(workspace, historySession);
   historicalSelectedObjectId = null;
   updateControls();
@@ -590,6 +596,7 @@ function startPointer(event: PointerEvent): void {
     scheduleRender();
     return;
   }
+  if (event.pointerType === 'pen' && penContactTransition(event, penEditPointerId) !== 'start') return;
   if (activeGesture) return;
   const effectiveTool = effectivePointerTool(event, activeTool, spacePressed);
   if (!effectiveTool || effectiveTool === 'touch') return;
@@ -650,6 +657,17 @@ function movePointer(event: PointerEvent): void {
     }
     return;
   }
+  if (event.pointerType === 'pen') {
+    const transition = penContactTransition(event, penEditPointerId);
+    if (transition === 'start') {
+      startPointer(event);
+      return;
+    }
+    if (transition === 'end') {
+      finishActivePointer(event, false);
+      return;
+    }
+  }
   if (!activeGesture || activeGesture.pointerId !== event.pointerId) return;
   if (activeGesture.type === 'pan') {
     activeGesture = updateGesture(activeGesture, event.pointerId, { screen: screenPoint(event) });
@@ -670,27 +688,10 @@ function movePointer(event: PointerEvent): void {
   scheduleRender();
 }
 
-function endPointer(event: PointerEvent): void {
-  if (event.pointerType === 'touch') {
-    if (suppressedTouchIds.delete(event.pointerId)) {
-      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      return;
-    }
-    if (!touchNavigation?.contacts.has(event.pointerId)) return;
-    touchNavigation = updateTouch(touchNavigation, event.pointerId, screenPoint(event));
-    const viewport = touchViewport(touchNavigation);
-    touchNavigation = endTouch(touchNavigation, event.pointerId);
-    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    if (!touchNavigation) {
-      applyNavigationViewport(viewport);
-      updateControls();
-      if (!isHistorical()) persistNavigationSoon();
-    }
-    scheduleRender();
-    return;
-  }
+function finishActivePointer(event: PointerEvent, includeFinalSample: boolean): void {
   if (!activeGesture || activeGesture.pointerId !== event.pointerId) return;
-  movePointer(event);
+  if (includeFinalSample) movePointer(event);
+  if (!activeGesture || activeGesture.pointerId !== event.pointerId) return;
   const commit = finishGesture(activeGesture, event.pointerId);
   activeGesture = null;
   if (penEditPointerId === event.pointerId) penEditPointerId = null;
@@ -732,6 +733,28 @@ function endPointer(event: PointerEvent): void {
     scheduleRender();
     if (!isHistorical()) persistNavigationSoon();
   }
+}
+
+function endPointer(event: PointerEvent): void {
+  if (event.pointerType === 'touch') {
+    if (suppressedTouchIds.delete(event.pointerId)) {
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      return;
+    }
+    if (!touchNavigation?.contacts.has(event.pointerId)) return;
+    touchNavigation = updateTouch(touchNavigation, event.pointerId, screenPoint(event));
+    const viewport = touchViewport(touchNavigation);
+    touchNavigation = endTouch(touchNavigation, event.pointerId);
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (!touchNavigation) {
+      applyNavigationViewport(viewport);
+      updateControls();
+      if (!isHistorical()) persistNavigationSoon();
+    }
+    scheduleRender();
+    return;
+  }
+  finishActivePointer(event, event.pointerType !== 'pen');
 }
 
 function changeZoom(factor: number, anchor?: { x: number; y: number }): void {
@@ -870,11 +893,25 @@ fileInput.addEventListener('change', async () => {
 });
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && canvasLibraryOpen) {
+  const libraryIntent = modalKeyboardIntent(canvasLibraryOpen, event.key);
+  if (libraryIntent === 'close') {
     event.preventDefault();
     closeCanvasLibrary();
     return;
   }
+  if (libraryIntent === 'cycle-focus') {
+    const focusable = Array.from(canvasLibraryRoot.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'));
+    if (focusable.length) {
+      event.preventDefault();
+      const current = focusable.indexOf(document.activeElement as HTMLElement);
+      const next = current < 0
+        ? (event.shiftKey ? focusable.length - 1 : 0)
+        : (current + (event.shiftKey ? -1 : 1) + focusable.length) % focusable.length;
+      focusable[next].focus();
+    }
+    return;
+  }
+  if (libraryIntent === 'contain') return;
   if (event.key === 'Escape' && isHistorical()) {
     event.preventDefault();
     showNow();

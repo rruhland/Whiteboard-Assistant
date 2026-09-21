@@ -44,6 +44,12 @@ describe('selection geometry', () => {
     expect(selectionHandlePoints(bounds, 2).rotate.y).toBe(-14);
   });
 
+  test('chooses the nearest visible handle when hit areas overlap', () => {
+    const thin = { minX: 0, minY: 0, maxX: 4, maxY: 100 };
+    expect(hitSelectionHandle(point(0, 50), thin, 1)).toBe('w');
+    expect(hitSelectionHandle(point(4, 50), thin, 1)).toBe('e');
+  });
+
   test('edge resize changes one axis and preserves stroke width and metadata', () => {
     const source = line('a', 0, 0, 10, 10, 6);
     const bounds = renderedStrokeBounds(source);
