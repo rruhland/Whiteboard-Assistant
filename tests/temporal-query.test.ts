@@ -33,6 +33,7 @@ describe('temporal queries', () => {
     const ordinary = queryRegionHistory(fixture.document, fixture.index, fixture.region);
     expect(ordinary.strokeIds).not.toContain(fixture.erasedId);
     expect(ordinary.erasedStrokeIds).toEqual([]);
+    expect(ordinary.entries.some(({ eventId }) => eventId === 'add-erased' || eventId === 'erase-region')).toBe(false);
     const withErased = queryRegionHistory(fixture.document, fixture.index, fixture.region, { includeErased: true, detail: 'geometry' });
     expect(withErased.erasedStrokeIds).toContain(fixture.erasedId);
     expect(withErased.strokes?.map(({ id }) => id)).toContain(fixture.erasedId);

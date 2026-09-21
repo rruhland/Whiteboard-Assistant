@@ -322,7 +322,10 @@ export function queryRegionHistory(
     let matches = false;
     for (const change of event?.changes ?? []) {
       const value = change.after ?? change.before;
-      if (value && intersects(value, bounds)) { snapshots.set(value.id, structuredClone(value)); matches = true; }
+      if (value && intersects(value, bounds) && (options.includeErased || visible.has(value.id))) {
+        snapshots.set(value.id, structuredClone(value));
+        matches = true;
+      }
     }
     if (matches) matchingEntries.push(entry);
   }

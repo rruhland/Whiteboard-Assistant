@@ -65,6 +65,7 @@ let objectPanelOpen = false;
 let overlayEnabled = true;
 let checkedObjectIds = new Set<string>();
 let selectedObjectId: string | null = null;
+let historicalSelectedObjectId: string | null = null;
 let timelinePanelOpen = false;
 
 try {
@@ -94,7 +95,7 @@ function panelState(): ObjectPanelState {
   return {
     ...graph,
     selectedStrokeId: isHistorical() ? null : selectedId,
-    selectedObjectId,
+    selectedObjectId: isHistorical() ? historicalSelectedObjectId : selectedObjectId,
     checkedObjectIds,
     overlayEnabled,
     unassignedStrokeIds: getUnassignedVisibleStrokes(associations, board.strokes).map(({ id }) => id),
@@ -175,13 +176,20 @@ const objectPanel = new ObjectPanel(objectPanelRoot, {
       return assignedId;
     }, objectId ? 'Stroke assigned' : 'Object created');
   },
-  onSelectObject(id) { selectedObjectId = id; refreshPanel(); scheduleRender(); },
+  onSelectObject(id) {
+    if (isHistorical()) historicalSelectedObjectId = id;
+    else selectedObjectId = id;
+    refreshPanel();
+    scheduleRender();
+  },
 });
 
 function enterHistoryPosition(position: number): void {
   cancelActiveGesture();
   try {
+    const entering = !isHistorical();
     historySession = selectHistoryPosition(workspace, historySession, position);
+    if (entering) historicalSelectedObjectId = null;
     activeTool = 'hand';
     canvas.dataset.tool = activeTool;
     updateControls();
@@ -197,6 +205,7 @@ function enterHistoryPosition(position: number): void {
 function showNow(): void {
   cancelActiveGesture();
   historySession = returnToNow(workspace, historySession);
+  historicalSelectedObjectId = null;
   updateControls();
   scheduleRender();
 }
@@ -267,6 +276,11 @@ function updateControls(): void {
     button.setAttribute('aria-pressed', String(button.dataset.tool === activeTool));
     button.disabled = isHistorical() && button.dataset.tool !== 'hand';
   });
+  const titledControls: HTMLElement[] = [undoButton, redoButton, openButton, saveButton, colorInput, widthInput, ...Array.from(document.querySelectorAll<HTMLElement>('[data-tool]'))];
+  for (const control of titledControls) {
+    if (control.dataset.liveTitle === undefined) control.dataset.liveTitle = control.title;
+    control.title = isHistorical() ? 'Return to now to edit' : control.dataset.liveTitle;
+  }
   historicalStatus.hidden = !isHistorical();
   historyToggle.setAttribute('aria-expanded', String(timelinePanelOpen));
   timelinePanel.render({ index: historySession.index, open: timelinePanelOpen, position: historySession.position, heatmapEnabled: historySession.heatmapEnabled });
