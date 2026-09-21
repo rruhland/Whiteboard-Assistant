@@ -2,7 +2,7 @@
 
 ## Automated gate
 
-- `npm test`: 20 files, 164 tests passed.
+- `npm test`: 20 files, 165 tests passed.
 - `npm run build`: TypeScript checking and Vite production bundling passed.
 - `git diff --check`: no whitespace errors.
 
@@ -23,6 +23,8 @@ At a 500 by 800 pixel viewport, the document and canvas-library dialog had no ho
 A correction pass also confirmed that Delete cannot reach selected board ink while the canvas-library modal is open, Tab and Shift+Tab remain within the dialog, and its heading receives initial focus.
 
 The selection follow-up passed synthetic pen and touch pointer flows in Chromium: pen-tip and finger drags begun in empty space inside the selection box moved the group; a finger drag on an edge handle resized it; an outside finger drag and two-finger gesture preserved selection; an outside finger tap cleared it; and a pen-tip stroke outside cleared selection while drawing. The browser recorded no console errors or warnings.
+
+A focused review found that eager outside-action clearing also affected mouse Select marquees. The correction restricts eager clearing to pen actions, so canceling a mouse marquee preserves the prior selection while a committed non-Shift marquee still replaces it.
 
 ## Automated behavior coverage
 

@@ -28,7 +28,7 @@ npm run preview   # serve the production build locally
 | Temporary stylus select | Hold the upper/right-click side button while touching the canvas |
 | Draw with a mouse | Pen button or `P`, then pointer-drag; a click creates a dot |
 | Select strokes | Select button or `V`, then drag a box fully around strokes; hold `Shift` to add another box |
-| Transform a selection | Drag anywhere inside its box with the pen tip, select button, mouse, or one finger; edge handles scale one axis, corner handles scale proportionally, and the top handle rotates |
+| Transform a selection | Drag anywhere inside its box with the pen tip, select button, one finger, or a mouse in Select mode; edge handles scale one axis, corner handles scale proportionally, and the top handle rotates |
 | Clear a selection | Start a pen action outside its box, or tap outside with one finger; finger pan and pinch keep the selection active |
 | Delete the selection | `Delete` or `Backspace`; the group is one undoable edit |
 | Erase whole strokes | Eraser button or `E`, then click or drag across strokes |

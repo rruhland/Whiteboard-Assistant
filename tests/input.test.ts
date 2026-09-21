@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition } from '../src/input';
+import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition, shouldClearSelectionOnStart } from '../src/input';
 
 describe('keyboard input routing', () => {
   it('reserves Space-pan for the canvas or page background, not a focused control', () => {
@@ -40,5 +40,13 @@ describe('keyboard input routing', () => {
     expect(modalKeyboardIntent(true, 'Tab')).toBe('cycle-focus');
     expect(modalKeyboardIntent(true, 'Escape')).toBe('close');
     expect(modalKeyboardIntent(false, 'Delete')).toBe('board');
+  });
+
+  it('clears selection eagerly for outside pen actions but not canceled mouse marquees', () => {
+    expect(shouldClearSelectionOnStart('pen', 'pen', false, false)).toBe(true);
+    expect(shouldClearSelectionOnStart('pen', 'select', false, false)).toBe(true);
+    expect(shouldClearSelectionOnStart('pen', 'select', true, false)).toBe(false);
+    expect(shouldClearSelectionOnStart('pen', 'pen', false, true)).toBe(false);
+    expect(shouldClearSelectionOnStart('mouse', 'select', false, false)).toBe(false);
   });
 });

@@ -14,7 +14,7 @@ import {
   updateGesture,
   type Gesture,
 } from './gesture';
-import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition, type Tool } from './input';
+import { effectivePointerTool, isSpacePanTarget, modalKeyboardIntent, penContactTransition, shouldClearSelectionOnStart, type Tool } from './input';
 import { ObjectPanel, type ObjectOverlay, type ObjectPanelState } from './object-panel';
 import { containedStrokeIds, mergeSelection, selectionBounds, selectionOperationAt } from './selection';
 import { createCanvas, deleteCanvas, initializeCanvasLibrary, openCanvas, readPortableBoard, renameCanvas, saveActiveCanvas, type CanvasCatalogV1, type StorageLike } from './storage';
@@ -632,19 +632,17 @@ function startPointer(event: PointerEvent): void {
   const selectedTransform = (effectiveTool === 'select' || (event.pointerType === 'pen' && effectiveTool === 'pen'))
     ? selectionTransform(event.pointerId, world)
     : null;
+  if (shouldClearSelectionOnStart(event.pointerType, effectiveTool, event.shiftKey, selectedTransform !== null)) selectedIds.clear();
 
   if (selectedTransform) {
     next = selectedTransform;
   } else if (effectiveTool === 'pen') {
-    if (event.pointerType === 'pen') selectedIds.clear();
     next = { type: 'ink', pointerId: event.pointerId, points: [world] };
   } else if (effectiveTool === 'hand') {
     next = { type: 'pan', pointerId: event.pointerId, originScreen: screen, currentScreen: screen, originViewport: { ...displayViewport() } };
   } else if (effectiveTool === 'select') {
-    if (!event.shiftKey) selectedIds.clear();
     next = { type: 'marquee', pointerId: event.pointerId, origin: world, current: world, additive: event.shiftKey };
   } else if (effectiveTool === 'eraser') {
-    if (event.pointerType === 'pen') selectedIds.clear();
     const strokeId = hitAt(world);
     next = { type: 'erase', pointerId: event.pointerId, strokeIds: strokeId ? [strokeId] : [], current: world };
   }

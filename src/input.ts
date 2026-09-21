@@ -35,3 +35,12 @@ export function modalKeyboardIntent(open: boolean, key: string): ModalKeyboardIn
   if (key === 'Escape') return 'close';
   return key === 'Tab' ? 'cycle-focus' : 'contain';
 }
+
+export function shouldClearSelectionOnStart(
+  pointerType: string,
+  tool: Tool,
+  additive: boolean,
+  overSelection: boolean,
+): boolean {
+  return pointerType === 'pen' && !overSelection && !(tool === 'select' && additive);
+}
